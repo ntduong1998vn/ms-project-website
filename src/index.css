@@ -123,8 +123,46 @@
     }
   body {
     @apply bg-background text-foreground;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
     }
   html {
     @apply font-sans;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
     }
+  #root {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    }
+}
+
+/* SVAR theme wrapper must fill 100% of flex container */
+.wx-theme,
+.wx-willow-theme {
+  height: 100% !important;
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+/* Pad bottom of chart and table container so horizontal scrollbar clears the last row */
+.wx-gantt .wx-chart {
+  padding-bottom: 22px !important;
+  box-sizing: border-box !important;
+}
+
+.wx-gantt .wx-table-container {
+  padding-bottom: 22px !important;
+  box-sizing: border-box !important;
 }
