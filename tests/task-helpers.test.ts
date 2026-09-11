@@ -28,6 +28,8 @@ describe('task ID helpers', () => {
   it('compares IDs by their string representation while rejecting undefined values', () => {
     expect(sameTaskId(7, '7')).toBe(true)
     expect(sameTaskId('alpha', 'alpha')).toBe(true)
+    expect(sameTaskId(7, 8)).toBe(false)
+    expect(sameTaskId(undefined, undefined)).toBe(false)
     expect(sameTaskId(undefined, 'undefined')).toBe(false)
     expect(sameTaskId(0, undefined)).toBe(false)
   })
@@ -69,12 +71,14 @@ describe('task hierarchy and dependency helpers', () => {
     const map = new Map([
       ['old-a', 1],
       ['old-b', 2],
+      ['99', 3],
     ])
 
     expect(remapPredecessorValue(['old-b', 'missing', 'old-a'], map)).toEqual([2, 1])
     expect(remapPredecessorValue('old-a, old-b missing', map)).toBe('1, 2')
     expect(remapPredecessorValue('old-b', map)).toBe('2')
-    expect(remapPredecessorValue(99, map)).toBe('')
+    expect(remapPredecessorValue(99, map)).toBe(3)
+    expect(remapPredecessorValue(42, map)).toBe('')
     expect(remapPredecessorValue({ source: 'old-a' }, map)).toEqual({ source: 'old-a' })
   })
 
@@ -100,6 +104,30 @@ describe('task hierarchy and dependency helpers', () => {
     expect(result.links).toEqual([{ id: 'l1', source: 1, target: 2, type: 'e2s' }])
     expect(result.selectedTaskId).toBe(2)
     expect(resequenceProject(tasks, links, null).selectedTaskId).toBe(null)
+  })
+
+  it('falls back for missing IDs, unknown predecessors, links, and selection', () => {
+    const tasks = [
+      task('known', 'Known'),
+      { text: 'missing ID', type: 'task', predecessors: ['known'] } as TaskWithPredecessors,
+      task('last', 'Last', { predecessors: 'unknown' }),
+    ]
+    const links: ILink[] = [
+      { id: 'valid', source: 'known', target: 'known', type: 'e2s' } as ILink,
+      { id: 'missing-source', source: 'unknown', target: 'known', type: 'e2e' } as ILink,
+      { id: 'missing-target', source: 'known', target: 'unknown', type: 's2s' } as ILink,
+    ]
+
+    const result = resequenceProject(tasks, links, 'not-selected')
+    const resultTasks = result.tasks as TaskWithPredecessors[]
+
+    expect(ids(resultTasks)).toEqual([1, 2, 3])
+    expect(resultTasks[0]).not.toHaveProperty('predecessors')
+    expect(resultTasks[1]).toMatchObject({ id: 2, predecessors: [1] })
+    expect(resultTasks[1]).not.toHaveProperty('parent')
+    expect(resultTasks[2].predecessors).toBe('')
+    expect(result.links).toEqual([{ id: 'valid', source: 1, target: 1, type: 'e2s' }])
+    expect(result.selectedTaskId).toBe(null)
   })
 
   it('detects direct, indirect, and already-cyclic parent chains', () => {
@@ -156,6 +184,61 @@ describe('task placement helpers', () => {
 
     expect(addTaskAtPlacement(tasks, incoming, undefined, undefined)).toEqual([...tasks, incoming])
     expect(addTaskAtPlacement(tasks, incoming, 99, 'before')).toEqual([...tasks, incoming])
+  })
+
+  it('handles an undefined mode, root target, and undefined incoming ID', () => {
+    const tasks = [task(1, 'root'), task(2, 'other')]
+    const incoming = { id: undefined, text: 'incoming', type: 'task', parent: 99 } as ITask
+
+    const before = addTaskAtPlacement(tasks, incoming, 1, 'before')
+    expect(ids(before)).toEqual([undefined, 1, 2])
+    expect(addTaskAtPlacement(tasks, incoming, undefined, 'before')).toEqual([...tasks, incoming])
+    expect(addTaskAtPlacement(tasks, incoming, 1, undefined)).toEqual([...tasks, incoming])
+  })
+
+  it('moves a child successfully, promotes its new parent, and retains an old summary with siblings', () => {
+    const tasks = [
+      task(1, 'old parent', { type: 'summary', open: true }),
+      task(2, 'moving child', { parent: 1 }),
+      task(3, 'remaining child', { parent: 1 }),
+      task(4, 'new parent'),
+    ]
+
+    const result = moveTaskAtPlacement(tasks, 2, 4, 'child')
+
+    expect(ids(result)).toEqual([1, 3, 4, 2])
+    expect(result[0]).toMatchObject({ id: 1, type: 'summary', open: true })
+    expect(result[2]).toMatchObject({ id: 4, type: 'summary', open: true })
+    expect(result[3]).toMatchObject({ id: 2, parent: 4 })
+  })
+
+  it('moves nested siblings up and down while retaining their parent', () => {
+    const tasks = [
+      task(1, 'parent', { type: 'summary', open: true }),
+      task(2, 'first', { parent: 1 }),
+      task(3, 'second', { parent: 1 }),
+      task(4, 'third', { parent: 1 }),
+    ]
+
+    expect(ids(moveTaskAtPlacement(tasks, 2, undefined, 'up'))).toEqual([1, 2, 3, 4])
+
+    const up = moveTaskAtPlacement(tasks, 3, undefined, 'up')
+    expect(ids(up)).toEqual([1, 3, 2, 4])
+    expect(up[1].parent).toBe(1)
+
+    expect(ids(moveTaskAtPlacement(tasks, 4, undefined, 'down'))).toEqual([1, 2, 3, 4])
+
+    const down = moveTaskAtPlacement(tasks, 3, undefined, 'down')
+    expect(ids(down)).toEqual([1, 2, 4, 3])
+    expect(down[3].parent).toBe(1)
+  })
+
+  it('preserves unrelated tasks with undefined IDs while moving a task', () => {
+    const unnamed = { id: undefined, text: 'unnamed', type: 'task' } as ITask
+    const tasks = [task(1, 'root'), unnamed, task(2, 'moving')]
+
+    const result = moveTaskAtPlacement(tasks, 2, 1, 'before')
+    expect(result[2]).toBe(unnamed)
   })
 
   it('moves a complete subtree before or after another sibling', () => {

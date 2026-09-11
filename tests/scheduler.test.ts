@@ -7,6 +7,7 @@ import {
   calculateEndDate,
   calculateTaskDuration,
   calculateWorkingDays,
+  createSvarCalendarAdapter,
   exclusiveEndToInclusiveFinish,
   formatToDateString,
   getNextWorkingDay,
@@ -119,6 +120,48 @@ describe('working-day durations and boundaries', () => {
     expect(dateString(exclusiveEndToInclusiveFinish(exclusiveEnd))).toBe('2026-09-04')
   })
 })
+describe('SVAR calendar adapter', () => {
+  it('adapts day and hour calendar operations, including negative offsets', () => {
+    for (const durationUnit of ['day', 'hour'] as const) {
+      const adapter = createSvarCalendarAdapter(workWeekCalendar, durationUnit)
+
+      expect(adapter.durationUnit).toBe(durationUnit)
+      expect(adapter.isWorkingDay(new Date(2026, 8, 5, 15))).toBe(false)
+      expect(dateString(adapter.getNextWorkingDay(localDate(2026, 9, 5)))).toBe(
+        '2026-09-07'
+      )
+      expect(dateString(adapter.getPreviousWorkingDay(localDate(2026, 9, 6)))).toBe(
+        '2026-09-04'
+      )
+      expect(dateString(adapter.addWorkingDays(localDate(2026, 9, 4), 2))).toBe(
+        '2026-09-08'
+      )
+      expect(dateString(adapter.addWorkingDays(localDate(2026, 9, 7), -1))).toBe(
+        '2026-09-04'
+      )
+      expect(adapter.getWorkingDays(localDate(2026, 9, 4), localDate(2026, 9, 8))).toBe(2)
+      expect(adapter.getWorkingDays(localDate(2026, 9, 8), localDate(2026, 9, 4))).toBe(2)
+      expect(adapter.getWorkingDays(localDate(2026, 9, 4), localDate(2026, 9, 4))).toBe(0)
+      expect(dateString(adapter.addWorkingHours(localDate(2026, 9, 4), 9))).toBe(
+        '2026-09-08'
+      )
+      expect(adapter.getWorkingHours(localDate(2026, 9, 4))).toBe(8)
+      expect(adapter.getWorkingHours(localDate(2026, 9, 5))).toBe(0)
+      expect(adapter.getWorkingHours(localDate(2026, 9, 4), localDate(2026, 9, 8))).toBe(16)
+    }
+  })
+
+  it('uses eight working hours as the fallback when configured hours are zero', () => {
+    const fallbackCalendar = { ...workWeekCalendar, workingHoursPerDay: 0 }
+    const adapter = createSvarCalendarAdapter(fallbackCalendar, 'hour')
+
+    expect(adapter.getWorkingHours(localDate(2026, 9, 7))).toBe(8)
+    expect(adapter.getWorkingHours(localDate(2026, 9, 7), localDate(2026, 9, 8))).toBe(8)
+    expect(dateString(adapter.addWorkingHours(localDate(2026, 9, 7), 1))).toBe('2026-09-08')
+    expect(calculateTaskDuration(localDate(2026, 9, 7), localDate(2026, 9, 8), fallbackCalendar, 'hour')).toBe(8)
+  })
+})
+
 
 describe('autoScheduleTasks dependency semantics', () => {
   it('schedules finish-to-start dependencies from the predecessor exclusive end', () => {
@@ -198,5 +241,195 @@ describe('autoScheduleTasks dependency semantics', () => {
     expect(dateString(milestone.start)).toBe('2026-09-08')
     expect(dateString(milestone.end!)).toBe('2026-09-08')
     expect(milestone.duration).toBe(0)
+  })
+  it('applies positive, negative, and unknown dependency lags', () => {
+    const result = autoScheduleTasks(
+      [
+        task(1, localDate(2026, 9, 7), 3),
+        task(2, localDate(2026, 9, 1), 1),
+        task(3, localDate(2026, 9, 1), 1),
+        task(4, localDate(2026, 9, 1), 1),
+        task(5, localDate(2026, 9, 1), 1),
+      ],
+      [
+        { ...link(6, 1, 2, 'e2s'), lag: 1 },
+        { ...link(7, 1, 3, 'e2s'), lag: -1 },
+        { ...link(8, 1, 4, 'unknown' as ILink['type']) },
+        { ...link(9, 1, 5, undefined as unknown as ILink['type']) },
+      ],
+      workWeekCalendar,
+      'day'
+    )
+
+    expect(dateString(scheduledTask(result, 1).end!)).toBe('2026-09-10')
+    expect(dateString(scheduledTask(result, 2).start)).toBe('2026-09-11')
+    expect(dateString(scheduledTask(result, 5).start)).toBe('2026-09-10')
+    expect(dateString(scheduledTask(result, 3).start)).toBe('2026-09-09')
+    expect(dateString(scheduledTask(result, 4).start)).toBe('2026-09-10')
+  })
+
+  it('applies positive lags to start-to-start, finish-to-finish, and start-to-finish links', () => {
+    const result = autoScheduleTasks(
+      [
+        task(1, localDate(2026, 9, 7), 2),
+        task(2, localDate(2026, 9, 1), 1),
+        task(3, localDate(2026, 9, 1), 2),
+        task(4, localDate(2026, 9, 1), 2),
+      ],
+      [
+        { ...link(9, 1, 2, 's2s'), lag: 2 },
+        { ...link(10, 1, 3, 'e2e'), lag: 1 },
+        { ...link(11, 1, 4, 's2e'), lag: 2 },
+      ],
+      workWeekCalendar,
+      'day'
+    )
+
+    expect(dateString(scheduledTask(result, 2).start)).toBe('2026-09-09')
+    expect(dateString(scheduledTask(result, 3).start)).toBe('2026-09-08')
+    expect(dateString(scheduledTask(result, 3).end!)).toBe('2026-09-10')
+    expect(dateString(scheduledTask(result, 4).start)).toBe('2026-09-07')
+    expect(dateString(scheduledTask(result, 4).end!)).toBe('2026-09-09')
+  })
+
+  it('keeps e2e and s2e milestones zero-width at their lagged constraints', () => {
+    const result = autoScheduleTasks(
+      [
+        task(1, localDate(2026, 9, 7), 2),
+        task(2, localDate(2026, 9, 1), 0, 'milestone'),
+        task(3, localDate(2026, 9, 7), 0, 'milestone'),
+        task(4, localDate(2026, 9, 1), 0, 'milestone'),
+      ],
+      [
+        link(12, 1, 2, 'e2e'),
+        { ...link(13, 3, 4, 's2e'), lag: 1 },
+      ],
+      workWeekCalendar,
+      'day'
+    )
+
+    expect(dateString(scheduledTask(result, 2).start)).toBe('2026-09-09')
+    expect(dateString(scheduledTask(result, 2).end!)).toBe('2026-09-09')
+    expect(dateString(scheduledTask(result, 4).start)).toBe('2026-09-08')
+    expect(dateString(scheduledTask(result, 4).end!)).toBe('2026-09-08')
+    expect(scheduledTask(result, 2).duration).toBe(0)
+    expect(scheduledTask(result, 4).duration).toBe(0)
+  })
+
+  it('uses hour durations and converts hour lags into working-day constraints', () => {
+    const result = autoScheduleTasks(
+      [
+        task(1, localDate(2026, 9, 7), 16),
+        task(2, localDate(2026, 9, 1), 9),
+        task(3, localDate(2026, 9, 7), 8),
+        task(4, localDate(2026, 9, 1), 16),
+        task(5, localDate(2026, 9, 7), 8),
+        task(6, localDate(2026, 9, 1), 16),
+      ],
+      [
+        { ...link(14, 1, 2, 'e2s'), lag: 9 },
+        { ...link(15, 3, 4, 'e2e'), lag: 8 },
+        { ...link(16, 5, 6, 's2e'), lag: 8 },
+      ],
+      workWeekCalendar,
+      'hour'
+    )
+
+    expect(dateString(scheduledTask(result, 1).end!)).toBe('2026-09-09')
+    expect(dateString(scheduledTask(result, 2).start)).toBe('2026-09-11')
+    expect(dateString(scheduledTask(result, 2).end!)).toBe('2026-09-15')
+    expect(dateString(scheduledTask(result, 4).start)).toBe('2026-09-07')
+    expect(dateString(scheduledTask(result, 4).end!)).toBe('2026-09-09')
+    expect(dateString(scheduledTask(result, 6).start)).toBe('2026-09-04')
+    expect(dateString(scheduledTask(result, 6).end!)).toBe('2026-09-08')
+  })
+
+  it('ignores missing predecessors and invalid public task or link inputs', () => {
+    const noId = { text: 'No id', start: localDate(2026, 9, 7), duration: 1 } as ITask
+    const result = autoScheduleTasks(
+      [
+        task(21, localDate(2026, 9, 7), 1),
+        noId,
+      ],
+      [
+        { id: 17, source: 999, target: 21, type: 'e2s' },
+        { id: 18, source: 21, target: undefined, type: 'e2s' } as ILink,
+        { id: 19, source: undefined, target: 21, type: 'e2s' } as ILink,
+      ],
+      workWeekCalendar,
+      'day'
+    )
+
+    expect(dateString(scheduledTask(result, 21).start)).toBe('2026-09-07')
+    expect(dateString(scheduledTask(result, 21).end!)).toBe('2026-09-08')
+    expect(result[1]).toBe(noId)
+  })
+
+  it('normalizes a task with a missing start without throwing', () => {
+    const result = autoScheduleTasks(
+      [{ id: 22, text: 'Missing start', duration: 2, type: 'task' } as ITask],
+      [],
+      workWeekCalendar,
+      'day'
+    )
+    const resolved = scheduledTask(result, 22)
+
+    expect(resolved.start).toBeInstanceOf(Date)
+    expect(resolved.end).toBeInstanceOf(Date)
+    expect(resolved.duration).toBe(2)
+  })
+
+  it('breaks dependency cycles while still returning scheduled tasks', () => {
+    const result = autoScheduleTasks(
+      [
+        task(23, localDate(2026, 9, 7), 1),
+        task(24, localDate(2026, 9, 7), 1),
+      ],
+      [link(20, 23, 24, 'e2s'), link(21, 24, 23, 'e2s')],
+      workWeekCalendar,
+      'day'
+    )
+
+    expect(dateString(scheduledTask(result, 24).start)).toBe('2026-09-08')
+    expect(dateString(scheduledTask(result, 23).start)).toBe('2026-09-09')
+  })
+
+  it('aggregates summary dates and duration across regular and milestone children', () => {
+    const summary = {
+      id: 30,
+      text: 'Summary',
+      start: localDate(2026, 9, 1),
+      duration: 1,
+      progress: 0,
+      type: 'summary',
+    } as ITask
+    const emptySummary = {
+      id: 31,
+      text: 'Empty summary',
+      start: localDate(2026, 9, 1),
+      duration: 1,
+      progress: 0,
+      type: 'summary',
+    } as ITask
+    const result = autoScheduleTasks(
+      [
+        summary,
+        emptySummary,
+        { ...task(32, localDate(2026, 9, 7), 0, 'milestone'), parent: 30 },
+        { ...task(33, localDate(2026, 9, 4), 1), parent: 30 },
+        { ...task(34, localDate(2026, 9, 9), 1), parent: 30 },
+      ],
+      [],
+      workWeekCalendar,
+      'day'
+    )
+
+    expect(dateString(scheduledTask(result, 32).start)).toBe('2026-09-07')
+    expect(dateString(scheduledTask(result, 32).end!)).toBe('2026-09-07')
+    expect(dateString(scheduledTask(result, 30).start)).toBe('2026-09-04')
+    expect(dateString(scheduledTask(result, 30).end!)).toBe('2026-09-10')
+    expect(scheduledTask(result, 30).duration).toBe(4)
+    expect(dateString(scheduledTask(result, 31).start)).toBe('2026-09-01')
+    expect(dateString(scheduledTask(result, 31).end!)).toBe('2026-09-02')
   })
 })
