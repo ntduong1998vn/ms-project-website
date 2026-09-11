@@ -21,5 +21,6 @@ export type GanttLink = {
 export type GanttResource = {
   id: number
   label: string
+  role?: string
   avatar?: string
 }

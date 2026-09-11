@@ -18,7 +18,7 @@ import {
   sampleResources,
   sampleTasks,
 } from '@/data/sample-gantt-data'
-import type { GanttTask } from '@/types/gantt'
+import type { GanttResource, GanttTask } from '@/types/gantt'
 import {
   Calendar,
   CalendarDays,
@@ -36,6 +36,8 @@ import {
   Trash2,
   Upload,
   Users,
+  UserPlus,
+  X,
   Zap,
   ZapOff,
   ChevronDown,
@@ -78,18 +80,593 @@ function PredecessorCell({ row, links }: { row: GanttTask; links: ILink[] }) {
   )
 }
 
-function ResourceNamesCell({ row }: { row: GanttTask }) {
+function ResourceNamesCell({ row, resources }: { row: GanttTask; resources: GanttResource[] }) {
   if (!row.resources || !Array.isArray(row.resources) || row.resources.length === 0) {
     return <span style={{ color: '#9ca3af' }}>-</span>
   }
   const names = row.resources
-    .map((id: number) => sampleResources.find((r) => r.id === id)?.label)
+    .map((id: number) => resources.find((r) => r.id === id)?.label)
     .filter(Boolean)
     .join(', ')
   return (
     <span style={{ fontSize: '0.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-      {names}
+      {names || '-'}
     </span>
+  )
+}
+
+type TaskWithResources = ITask & { resources?: number[] }
+
+type DependencyType = ILink['type']
+
+const dependencyTypeOptions: Array<{ value: DependencyType; label: string }> = [
+  { value: 'e2s', label: 'FS — Finish to Start' },
+  { value: 's2s', label: 'SS — Start to Start' },
+  { value: 'e2e', label: 'FF — Finish to Finish' },
+  { value: 's2e', label: 'SF — Start to Finish' },
+]
+
+type TaskPlacementMode = 'before' | 'after' | 'child' | 'up' | 'down'
+
+function sameTaskId(left: string | number | undefined, right: string | number | undefined): boolean {
+  return left !== undefined && right !== undefined && String(left) === String(right)
+}
+
+function collectTaskSubtreeIds(tasks: ITask[], rootId: string | number): Set<string> {
+  const ids = new Set<string>([String(rootId)])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const task of tasks) {
+      if (
+        task.id !== undefined &&
+        task.parent !== undefined &&
+        ids.has(String(task.parent)) &&
+        !ids.has(String(task.id))
+      ) {
+        ids.add(String(task.id))
+        changed = true
+      }
+    }
+  }
+  return ids
+}
+
+function subtreeEndIndex(tasks: ITask[], rootIndex: number): number {
+  const root = tasks[rootIndex]
+  if (!root || root.id === undefined) return rootIndex
+  const subtreeIds = collectTaskSubtreeIds(tasks, root.id)
+  let end = rootIndex + 1
+  while (end < tasks.length) {
+    const task = tasks[end]
+    if (task.parent === undefined || !subtreeIds.has(String(task.parent))) break
+    end += 1
+  }
+  return end
+}
+
+function addTaskAtPlacement(
+  tasks: ITask[],
+  task: ITask,
+  target: string | number | undefined,
+  mode: TaskPlacementMode | undefined
+): ITask[] {
+  if (target === undefined || mode === undefined) return [...tasks, task]
+  const targetIndex = tasks.findIndex((candidate) => sameTaskId(candidate.id, target))
+  if (targetIndex < 0) return [...tasks, task]
+
+  const targetTask = tasks[targetIndex]
+  const placedTask = { ...task }
+  if (mode === 'child') {
+    placedTask.parent = targetTask.id
+  } else if (targetTask.parent !== undefined) {
+    placedTask.parent = targetTask.parent
+  } else {
+    delete placedTask.parent
+  }
+
+  const insertionIndex =
+    mode === 'child' || mode === 'after' ? subtreeEndIndex(tasks, targetIndex) : targetIndex
+  const nextTasks =
+    mode === 'child'
+      ? tasks.map((candidate) =>
+          sameTaskId(candidate.id, targetTask.id)
+            ? { ...candidate, type: 'summary', open: true }
+            : candidate
+        )
+      : tasks
+  return [...nextTasks.slice(0, insertionIndex), placedTask, ...nextTasks.slice(insertionIndex)]
+}
+
+function moveTaskAtPlacement(
+  tasks: ITask[],
+  id: string | number,
+  target: string | number | undefined,
+  mode: TaskPlacementMode
+): ITask[] {
+  const movedIndex = tasks.findIndex((task) => sameTaskId(task.id, id))
+  if (movedIndex < 0) return tasks
+
+  const movedIds = collectTaskSubtreeIds(tasks, id)
+  let targetId = target
+  let placement: 'before' | 'after' | 'child' =
+    mode === 'child' ? 'child' : mode === 'after' ? 'after' : 'before'
+  const movedTask = tasks[movedIndex]
+
+  if ((mode === 'up' || mode === 'down') && targetId === undefined) {
+    const siblings = tasks.filter((task) =>
+      task.parent === undefined && movedTask.parent === undefined
+        ? true
+        : sameTaskId(task.parent, movedTask.parent)
+    )
+    const siblingIndex = siblings.findIndex((task) => sameTaskId(task.id, id))
+    const sibling = siblings[siblingIndex + (mode === 'up' ? -1 : 1)]
+    targetId = sibling?.id
+    placement = mode === 'up' ? 'before' : 'after'
+  }
+  if (targetId === undefined || movedIds.has(String(targetId))) return tasks
+
+  const targetIndex = tasks.findIndex((task) => sameTaskId(task.id, targetId))
+  if (targetIndex < 0) return tasks
+  const targetTask = tasks[targetIndex]
+  const remaining = tasks.filter((task) => task.id === undefined || !movedIds.has(String(task.id)))
+  const remainingTargetIndex = remaining.findIndex((task) => sameTaskId(task.id, targetId))
+  if (remainingTargetIndex < 0) return tasks
+
+  const movedBlock = tasks.filter((task) => task.id !== undefined && movedIds.has(String(task.id)))
+  const movedRoot = { ...movedBlock[0] }
+  if (placement === 'child') {
+    movedRoot.parent = targetTask.id
+  } else if (targetTask.parent !== undefined) {
+    movedRoot.parent = targetTask.parent
+  } else {
+    delete movedRoot.parent
+  }
+  movedBlock[0] = movedRoot
+
+  const insertionIndex =
+    placement === 'after' || placement === 'child'
+      ? subtreeEndIndex(remaining, remainingTargetIndex)
+      : remainingTargetIndex
+  let nextTasks = [
+    ...remaining.slice(0, insertionIndex),
+    ...movedBlock,
+    ...remaining.slice(insertionIndex),
+  ]
+
+  if (placement === 'child') {
+    nextTasks = nextTasks.map((task) =>
+      sameTaskId(task.id, targetTask.id) && task.type !== 'summary'
+        ? { ...task, type: 'summary', open: true }
+        : task
+    )
+  }
+
+  const oldParent = movedTask.parent
+  if (
+    oldParent !== undefined &&
+    !nextTasks.some((task) => sameTaskId(task.parent, oldParent))
+  ) {
+    nextTasks = nextTasks.map((task) =>
+      sameTaskId(task.id, oldParent) ? { ...task, type: 'task' } : task
+    )
+  }
+  return nextTasks
+}
+
+function TaskInfoPanel({
+  task,
+  tasks,
+  links,
+  resources,
+  onClose,
+  onTaskChange,
+  onAddPredecessor,
+  onUpdatePredecessor,
+  onDeletePredecessor,
+  onToggleResource,
+  onResourceChange,
+}: {
+  task: ITask
+  tasks: ITask[]
+  links: ILink[]
+  resources: GanttResource[]
+  onClose: () => void
+  onTaskChange: (id: string | number, patch: Partial<ITask>) => void
+  onAddPredecessor: (link: { source: string | number; target: string | number; type: DependencyType }) => void
+  onUpdatePredecessor: (id: string | number, patch: Partial<ILink>) => void
+  onDeletePredecessor: (id: string | number) => void
+  onToggleResource: (taskId: string | number, resourceId: number, assigned: boolean) => void
+  onResourceChange: (id: number, patch: Partial<GanttResource>) => void
+}) {
+  const [activePanelTab, setActivePanelTab] = useState<'general' | 'resources'>('general')
+  const [newPredecessorId, setNewPredecessorId] = useState('')
+  const [newPredecessorType, setNewPredecessorType] = useState<DependencyType>('e2s')
+  const taskId = task.id
+  const taskResources = new Set((task as TaskWithResources).resources ?? [])
+
+
+  if (taskId === undefined) return null
+
+  const incomingLinks = links.filter((link) => String(link.target) === String(taskId))
+  const predecessorCandidates = tasks.filter(
+    (candidate) => candidate.id !== undefined && String(candidate.id) !== String(taskId)
+  )
+
+  const handleAddPredecessor = () => {
+    const source = predecessorCandidates.find(
+      (candidate) => String(candidate.id) === newPredecessorId
+    )?.id
+    if (source === undefined) return
+
+    onAddPredecessor({
+      source,
+      target: taskId,
+      type: newPredecessorType,
+    })
+    setNewPredecessorId('')
+  }
+
+  return (
+    <aside
+      aria-label="Task information"
+      data-panel="task-info"
+      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border bg-card"
+    >
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Task Info</p>
+          <h2 className="max-w-[230px] truncate text-sm font-semibold text-foreground">
+            #{taskId} {task.text}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close task information"
+          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div role="tablist" aria-label="Task information sections" className="flex border-b border-border px-3">
+          <button
+            type="button"
+            role="tab"
+            id="task-info-general-tab"
+            aria-selected={activePanelTab === 'general'}
+            aria-controls="task-info-general"
+            onClick={() => setActivePanelTab('general')}
+            className={`border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
+              activePanelTab === 'general'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            General
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="task-info-resources-tab"
+            aria-selected={activePanelTab === 'resources'}
+            aria-controls="task-info-resources"
+            onClick={() => setActivePanelTab('resources')}
+            className={`border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
+              activePanelTab === 'resources'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Resources
+          </button>
+        </div>
+        {activePanelTab === 'general' ? (
+          <div id="task-info-general" role="tabpanel" aria-labelledby="task-info-general-tab" className="space-y-5 p-4">
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Task name</span>
+              <input
+                value={task.text}
+                onChange={(event) => onTaskChange(taskId, { text: event.target.value })}
+                aria-label="Task name"
+                className="w-full rounded-md border border-input bg-background px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </label>
+            <dl className="rounded-lg border border-border bg-background p-3 text-xs">
+              <div>
+                <dt className="text-muted-foreground">Type</dt>
+                <dd className="mt-1 font-medium capitalize text-foreground">{task.type}</dd>
+              </div>
+            </dl>
+            <section aria-labelledby="task-info-predecessors-heading" className="space-y-3">
+              <div>
+                <h3 id="task-info-predecessors-heading" className="text-sm font-semibold text-foreground">
+                  Predecessors
+                </h3>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Tasks that must reach their dependency point before this task can proceed.
+                </p>
+              </div>
+              {incomingLinks.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                  No predecessor links.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {incomingLinks.map((link, index) => {
+                    const predecessor = tasks.find(
+                      (candidate) => String(candidate.id) === String(link.source)
+                    )
+                    const sourceValue = String(link.source)
+                    const linkId = link.id
+                    return (
+                      <div
+                        key={linkId ?? `${sourceValue}-${index}`}
+                        className="space-y-2 rounded-lg border border-border bg-background p-3"
+                      >
+                        <div className="flex items-end gap-2">
+                          <label className="min-w-0 flex-1 space-y-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Predecessor</span>
+                            <select
+                              value={sourceValue}
+                              onChange={(event) => {
+                                if (linkId === undefined) return
+                                const sourceTask = predecessorCandidates.find(
+                                  (candidate) => String(candidate.id) === event.target.value
+                                )
+                                if (sourceTask?.id !== undefined) {
+                                  onUpdatePredecessor(linkId, { source: sourceTask.id })
+                                }
+                              }}
+                              aria-label={`Predecessor for ${task.text}`}
+                              className="w-full min-w-0 rounded-md border border-input bg-card px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                            >
+                              {!predecessor && (
+                                <option value={sourceValue}>#{link.source} (missing task)</option>
+                              )}
+                              {predecessorCandidates.map((candidate) => (
+                                <option
+                                  key={candidate.id}
+                                  value={String(candidate.id)}
+                                  disabled={incomingLinks.some(
+                                    (otherLink) =>
+                                      otherLink.id !== linkId &&
+                                      String(otherLink.source) === String(candidate.id)
+                                  )}
+                                >
+                                  #{candidate.id} {candidate.text}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => linkId !== undefined && onDeletePredecessor(linkId)}
+                            aria-label={`Remove predecessor ${predecessor?.text ?? link.source}`}
+                            disabled={linkId === undefined}
+                            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <label className="block space-y-1">
+                          <span className="text-[11px] font-medium text-muted-foreground">Dependency type</span>
+                          <select
+                            value={link.type}
+                            onChange={(event) => {
+                              if (linkId !== undefined) {
+                                onUpdatePredecessor(linkId, {
+                                  type: event.target.value as DependencyType,
+                                })
+                              }
+                            }}
+                            aria-label={`Dependency type for ${predecessor?.text ?? link.source}`}
+                            disabled={linkId === undefined}
+                            className="w-full rounded-md border border-input bg-card px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {dependencyTypeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="space-y-2 rounded-lg border border-dashed border-border bg-background p-3">
+                <label className="block space-y-1">
+                  <span className="text-[11px] font-medium text-muted-foreground">Add predecessor</span>
+                  <select
+                    value={newPredecessorId}
+                    onChange={(event) => setNewPredecessorId(event.target.value)}
+                    aria-label={`Add predecessor for ${task.text}`}
+                    disabled={predecessorCandidates.length === 0}
+                    className="w-full rounded-md border border-input bg-card px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="">Select a task</option>
+                    {predecessorCandidates.map((candidate) => (
+                      <option
+                        key={candidate.id}
+                        value={String(candidate.id)}
+                        disabled={incomingLinks.some(
+                          (link) => String(link.source) === String(candidate.id)
+                        )}
+                      >
+                        #{candidate.id} {candidate.text}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex items-end gap-2">
+                  <label className="min-w-0 flex-1 space-y-1">
+                    <span className="text-[11px] font-medium text-muted-foreground">Dependency type</span>
+                    <select
+                      value={newPredecessorType}
+                      onChange={(event) => setNewPredecessorType(event.target.value as DependencyType)}
+                      aria-label={`New dependency type for ${task.text}`}
+                      disabled={predecessorCandidates.length === 0}
+                      className="w-full rounded-md border border-input bg-card px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {dependencyTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAddPredecessor}
+                    disabled={!newPredecessorId || predecessorCandidates.length === 0}
+                    className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        ) : (
+          <div id="task-info-resources" role="tabpanel" aria-labelledby="task-info-resources-tab" className="space-y-4 p-4">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Assigned resources</h3>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Assign people to this task and edit their details.
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-background">
+              {resources.length === 0 && (
+                <p className="px-3 py-4 text-xs text-muted-foreground">
+                  No resources yet. Add one from the Resources tab.
+                </p>
+              )}
+              <div className="divide-y divide-border">
+                {resources.map((resource) => {
+                  const checked = taskResources.has(resource.id)
+                  return (
+                    <div key={resource.id} className="flex items-start gap-2.5 px-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => onToggleResource(taskId, resource.id, event.target.checked)}
+                        aria-label={`Assign ${resource.label} to ${task.text}`}
+                        className="mt-1 h-3.5 w-3.5 accent-[#107c41]"
+                      />
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <input
+                          value={resource.label}
+                          onChange={(event) => onResourceChange(resource.id, { label: event.target.value })}
+                          aria-label={`Edit resource ${resource.label}`}
+                          className="w-full border-0 bg-transparent p-0 text-xs font-medium text-foreground outline-none focus:ring-0"
+                        />
+                        <input
+                          value={resource.role ?? ''}
+                          onChange={(event) => onResourceChange(resource.id, { role: event.target.value })}
+                          placeholder="Role (optional)"
+                          aria-label={`Edit role for ${resource.label}`}
+                          className="w-full border-0 bg-transparent p-0 text-[11px] text-muted-foreground outline-none focus:ring-0"
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+function ResourcesPanel({
+  resources,
+  tasks,
+  onAdd,
+  onDelete,
+  onChange,
+}: {
+  resources: GanttResource[]
+  tasks: ITask[]
+  onAdd: () => void
+  onDelete: (id: number) => void
+  onChange: (id: number, patch: Partial<GanttResource>) => void
+}) {
+  const assignmentCount = (resourceId: number) =>
+    tasks.filter((task) => (task as TaskWithResources).resources?.includes(resourceId)).length
+
+  return (
+    <section aria-labelledby="resources-heading" className="h-full overflow-auto bg-background p-5">
+      <div className="mx-auto w-full max-w-5xl">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <h1 id="resources-heading" className="text-lg font-semibold text-foreground">
+              Resources
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Manage the people available to your project and their task assignments.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onAdd}
+            className="flex shrink-0 items-center gap-1.5 rounded-md bg-[#107c41] px-3 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#0f6d39]"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add resource
+          </button>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_100px_42px] items-center gap-3 border-b border-border bg-muted/40 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Name</span>
+            <span>Role</span>
+            <span>Assigned tasks</span>
+            <span className="sr-only">Actions</span>
+          </div>
+          {resources.length === 0 && (
+            <p className="px-4 py-10 text-center text-sm text-muted-foreground">No resources have been added yet.</p>
+          )}
+          {resources.map((resource) => (
+            <div
+              key={resource.id}
+              className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_100px_42px] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
+            >
+              <label className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                  {(resource.label.trim()[0] || '?').toUpperCase()}
+                </span>
+                <input
+                  value={resource.label}
+                  onChange={(event) => onChange(resource.id, { label: event.target.value })}
+                  aria-label={`Resource name ${resource.label}`}
+                  className="min-w-0 w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm font-medium outline-none hover:border-border focus:border-primary focus:bg-background"
+                />
+              </label>
+              <input
+                value={resource.role ?? ''}
+                onChange={(event) => onChange(resource.id, { role: event.target.value })}
+                aria-label={`Resource role ${resource.label}`}
+                placeholder="Add role"
+                className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-muted-foreground outline-none hover:border-border focus:border-primary focus:bg-background"
+              />
+              <span className="text-xs tabular-nums text-muted-foreground">{assignmentCount(resource.id)}</span>
+              <button
+                type="button"
+                onClick={() => onDelete(resource.id)}
+                aria-label={`Delete resource ${resource.label}`}
+                className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -341,14 +918,9 @@ const scalePresets: Record<string, IScaleConfig[]> = {
   ],
 }
 
-const resources: IResource[] = sampleResources.map((r) => ({
-  id: r.id,
-  name: r.label,
-  avatar: r.avatar,
-}))
 
 type ZoomMode = keyof typeof scalePresets
-type RibbonTab = 'task' | 'project' | 'view'
+type RibbonTab = 'task' | 'project' | 'view' | 'resources'
 
 export function GanttView() {
   const [calendarConfig, setCalendarConfig] = useState<ProjectCalendarConfig>(defaultCalendarConfig)
@@ -370,6 +942,7 @@ export function GanttView() {
     )
   )
   const [links, setLinks] = useState<ILink[]>(sampleLinks as unknown as ILink[])
+  const [resourceList, setResourceList] = useState<GanttResource[]>(sampleResources)
 
   const [api, setApi] = useState<IApi | null>(null)
   const apiRef = useRef<IApi | null>(null)
@@ -550,37 +1123,156 @@ export function GanttView() {
     },
     [calendarConfig, durationUnit, isAutoSchedule, links]
   )
+  const ganttResources = useMemo<IResource[]>(
+    () =>
+      resourceList.map((resource) => ({
+        id: resource.id,
+        name: resource.label,
+        avatar: resource.avatar,
+      })),
+    [resourceList]
+  )
+
+  const handleResourceChange = useCallback((id: number, patch: Partial<GanttResource>) => {
+    setResourceList((current) =>
+      current.map((resource) => (resource.id === id ? { ...resource, ...patch } : resource))
+    )
+  }, [])
+
+  const handleAddResource = useCallback(() => {
+    setResourceList((current) => {
+      const nextId = current.length > 0 ? Math.max(...current.map((resource) => resource.id)) + 1 : 1
+      return [...current, { id: nextId, label: `New Resource ${nextId}` }]
+    })
+  }, [])
+
+  const handleDeleteResource = useCallback((id: number) => {
+    const resource = resourceList.find((item) => item.id === id)
+    if (!resource || !window.confirm(`Remove ${resource.label}? Existing task assignments will be cleared.`)) return
+    setResourceList((current) => current.filter((item) => item.id !== id))
+    setTasks((current) =>
+      current.map((task) => {
+        const assigned = (task as TaskWithResources).resources
+        if (!assigned) return task
+        return { ...task, resources: assigned.filter((resourceId) => resourceId !== id) } as ITask
+      })
+    )
+  }, [resourceList])
+
+  const handleToggleTaskResource = useCallback(
+    (taskId: string | number, resourceId: number, assigned: boolean) => {
+      setTasks((current) =>
+        current.map((task) => {
+          if (String(task.id) !== String(taskId)) return task
+          const currentResources = (task as TaskWithResources).resources ?? []
+          const nextResources = assigned
+            ? Array.from(new Set([...currentResources, resourceId]))
+            : currentResources.filter((id) => id !== resourceId)
+          return { ...task, resources: nextResources } as ITask
+        })
+      )
+    },
+    []
+  )
+
+  const handleTaskInfoChange = useCallback(
+    (id: string | number, patch: Partial<ITask>) => {
+      handleUpdateTask({ id, task: patch })
+    },
+    [handleUpdateTask]
+  )
+
 
   const handleAddTask = useCallback(
-    ({ task }: { task: ITask }) => {
-      setTasks((prev) => {
-        const updated = [...prev, task]
-        if (isAutoSchedule) {
-          return autoScheduleTasks(updated, links, calendarConfig, durationUnit)
-        }
-        return updated
-      })
-      if (task.id !== undefined) {
-        setSelectedTaskId(task.id)
+    ({
+      task,
+      target,
+      mode,
+    }: {
+      task: ITask
+      target?: string | number
+      mode?: TaskPlacementMode
+    }) => {
+      const nextId = tasks.length > 0 ? Math.max(...tasks.map((item) => Number(item.id) || 0)) + 1 : 1
+      const taskId = task.id ?? nextId
+      const type = task.type || 'task'
+      const start = task.start ? new Date(task.start) : getNextWorkingDay(new Date(), calendarConfig)
+      const duration =
+        type === 'milestone'
+          ? 0
+          : task.duration ?? (durationUnit === 'hour' ? calendarConfig.workingHoursPerDay || 8 : 1)
+      const end =
+        type === 'milestone'
+          ? start
+          : task.end
+            ? new Date(task.end)
+            : calculateEndDate(start, duration, calendarConfig, durationUnit)
+      const newTask: ITask = {
+        ...task,
+        id: taskId,
+        text: task.text || `New Task ${taskId}`,
+        start,
+        end,
+        duration,
+        progress: task.progress ?? 0,
+        type,
       }
+
+      const newTasksList = addTaskAtPlacement(tasks, newTask, target, mode)
+      const scheduled = isAutoSchedule
+        ? autoScheduleTasks(newTasksList, links, calendarConfig, durationUnit)
+        : newTasksList
+      setTasks(scheduled)
+      setSelectedTaskId(taskId)
     },
-    [calendarConfig, durationUnit, isAutoSchedule, links]
+    [calendarConfig, durationUnit, isAutoSchedule, links, tasks]
+  )
+
+  const handleMoveTask = useCallback(
+    ({
+      id,
+      target,
+      mode,
+      inProgress,
+    }: {
+      id: string | number
+      target?: string | number
+      mode: TaskPlacementMode
+      inProgress?: boolean
+    }) => {
+      if (inProgress) return
+      const movedTasks = moveTaskAtPlacement(tasks, id, target, mode)
+      if (movedTasks === tasks) return
+      const scheduled = isAutoSchedule
+        ? autoScheduleTasks(movedTasks, links, calendarConfig, durationUnit)
+        : movedTasks
+      setTasks(scheduled)
+      setSelectedTaskId(id)
+    },
+    [calendarConfig, durationUnit, isAutoSchedule, links, tasks]
   )
 
   const handleDeleteTask = useCallback(
     ({ id }: { id: string | number }) => {
-      setTasks((prev) => {
-        const updated = prev.filter((t) => t.id !== id)
-        if (isAutoSchedule) {
-          return autoScheduleTasks(updated, links, calendarConfig, durationUnit)
-        }
-        return updated
-      })
-      if (selectedTaskId === id) {
+      const idsToDelete = collectTaskSubtreeIds(tasks, id)
+      const remainingTasks = tasks.filter(
+        (task) => task.id === undefined || !idsToDelete.has(String(task.id))
+      )
+      const remainingLinks = links.filter(
+        (link) =>
+          !idsToDelete.has(String(link.source)) &&
+          !idsToDelete.has(String(link.target))
+      )
+      const scheduled = isAutoSchedule
+        ? autoScheduleTasks(remainingTasks, remainingLinks, calendarConfig, durationUnit)
+        : remainingTasks
+      setTasks(scheduled)
+      setLinks(remainingLinks)
+      if (selectedTaskId != null && idsToDelete.has(String(selectedTaskId))) {
         setSelectedTaskId(null)
       }
     },
-    [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId]
+    [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks]
   )
 
   const handleAddLink = useCallback(
@@ -644,6 +1336,47 @@ export function GanttView() {
       })
     },
     [calendarConfig, durationUnit, isAutoSchedule]
+  )
+
+  const handleAddTaskInfoPredecessor = useCallback(
+    (link: { source: string | number; target: string | number; type: DependencyType }) => {
+      const duplicate = links.some(
+        (existingLink) =>
+          String(existingLink.source) === String(link.source) &&
+          String(existingLink.target) === String(link.target)
+      )
+      if (duplicate || String(link.source) === String(link.target)) return
+      handleAddLink({ link })
+    },
+    [handleAddLink, links]
+  )
+
+  const handleUpdateTaskInfoPredecessor = useCallback(
+    (id: string | number, link: Partial<ILink>) => {
+      const currentLink = links.find((existingLink) => existingLink.id === id)
+      if (
+        currentLink &&
+        link.source !== undefined &&
+        (String(link.source) === String(currentLink.target) ||
+          links.some(
+            (existingLink) =>
+              existingLink.id !== id &&
+              String(existingLink.source) === String(link.source) &&
+              String(existingLink.target) === String(currentLink.target)
+          ))
+      ) {
+        return
+      }
+      handleUpdateLink({ id, link })
+    },
+    [handleUpdateLink, links]
+  )
+
+  const handleDeleteTaskInfoPredecessor = useCallback(
+    (id: string | number) => {
+      handleDeleteLink({ id })
+    },
+    [handleDeleteLink]
   )
 
   // Calendar configuration saved from modal
@@ -729,7 +1462,9 @@ export function GanttView() {
     const duration = durationUnit === 'hour' ? (calendarConfig.workingHoursPerDay || 8) : 1
     const endDate = calculateEndDate(today, duration, calendarConfig, durationUnit)
 
-    const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) : null
+    const selectedTask = selectedTaskId != null
+      ? tasks.find((task) => sameTaskId(task.id, selectedTaskId))
+      : null
     const parentId = selectedTask?.type === 'summary' ? selectedTask.id : selectedTask?.parent
 
     const newTask: ITask = {
@@ -757,7 +1492,9 @@ export function GanttView() {
     const nextId = tasks.length > 0 ? Math.max(...tasks.map((t) => Number(t.id) || 0)) + 1 : 1
     const today = getNextWorkingDay(new Date(), calendarConfig)
 
-    const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) : null
+    const selectedTask = selectedTaskId != null
+      ? tasks.find((task) => sameTaskId(task.id, selectedTaskId))
+      : null
     const parentId = selectedTask?.type === 'summary' ? selectedTask.id : selectedTask?.parent
 
     const newMilestone: ITask = {
@@ -783,12 +1520,12 @@ export function GanttView() {
   // Toolbar Actions: Indent Task
   const handleIndent = useCallback(() => {
     if (selectedTaskId == null) return
-    const idx = tasks.findIndex((t) => t.id === selectedTaskId)
+    const idx = tasks.findIndex((task) => sameTaskId(task.id, selectedTaskId))
     if (idx <= 0) return // First task cannot be indented
 
     const prevTask = tasks[idx - 1]
     const updatedTasks = tasks.map((t, i) => {
-      if (t.id === selectedTaskId) {
+      if (sameTaskId(t.id, selectedTaskId)) {
         return { ...t, parent: prevTask.id }
       }
       if (i === idx - 1) {
@@ -814,14 +1551,14 @@ export function GanttView() {
   // Toolbar Actions: Outdent Task
   const handleOutdent = useCallback(() => {
     if (selectedTaskId == null) return
-    const currTask = tasks.find((t) => t.id === selectedTaskId)
+    const currTask = tasks.find((task) => sameTaskId(task.id, selectedTaskId))
     if (!currTask || currTask.parent == null) return // Already root level
 
-    const parentTask = tasks.find((t) => t.id === currTask.parent)
+    const parentTask = tasks.find((task) => sameTaskId(task.id, currTask.parent))
     const newParent = parentTask ? parentTask.parent : undefined
 
     const updatedTasks = tasks.map((t) => {
-      if (t.id === selectedTaskId) {
+      if (sameTaskId(t.id, selectedTaskId)) {
         const copy = { ...t }
         if (newParent !== undefined) {
           copy.parent = newParent
@@ -833,12 +1570,12 @@ export function GanttView() {
       return t
     })
 
-    const remainingChildren = updatedTasks.filter((t) => t.parent === currTask.parent)
-    const finalTasks = updatedTasks.map((t) => {
-      if (t.id === currTask.parent && remainingChildren.length === 0) {
-        return { ...t, type: 'task' }
+    const remainingChildren = updatedTasks.filter((task) => sameTaskId(task.parent, currTask.parent))
+    const finalTasks = updatedTasks.map((task) => {
+      if (sameTaskId(task.id, currTask.parent) && remainingChildren.length === 0) {
+        return { ...task, type: 'task' }
       }
-      return t
+      return task
     })
 
     if (apiRef.current) {
@@ -859,22 +1596,14 @@ export function GanttView() {
   const handleDeleteSelectedTask = useCallback(() => {
     if (selectedTaskId == null) return
     const idToDelete = selectedTaskId
-
-    const idsToDelete = new Set<string | number>([idToDelete])
-    let addedMore = true
-    while (addedMore) {
-      addedMore = false
-      for (const t of tasks) {
-        if (t.id !== undefined && t.parent !== undefined && idsToDelete.has(t.parent) && !idsToDelete.has(t.id)) {
-          idsToDelete.add(t.id)
-          addedMore = true
-        }
-      }
-    }
-
-    const remainingTasks = tasks.filter((t) => t.id === undefined || !idsToDelete.has(t.id))
+    const idsToDelete = collectTaskSubtreeIds(tasks, idToDelete)
+    const remainingTasks = tasks.filter(
+      (task) => task.id === undefined || !idsToDelete.has(String(task.id))
+    )
     const remainingLinks = links.filter(
-      (l) => !idsToDelete.has(l.source) && !idsToDelete.has(l.target)
+      (link) =>
+        !idsToDelete.has(String(link.source)) &&
+        !idsToDelete.has(String(link.target))
     )
 
     if (apiRef.current) {
@@ -908,7 +1637,7 @@ export function GanttView() {
         end: t.end ? formatToDateString(new Date(t.end)) : undefined,
       })),
       links,
-      resources: sampleResources,
+      resources: resourceList,
     }
 
     const jsonString = JSON.stringify(exportData, null, 2)
@@ -921,7 +1650,7 @@ export function GanttView() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-  }, [calendarConfig, durationUnit, links, tasks])
+  }, [calendarConfig, durationUnit, links, resourceList, tasks])
 
   // File Menu: Import JSON
   const handleImportFile = useCallback(
@@ -936,8 +1665,9 @@ export function GanttView() {
           if (typeof rawContent !== 'string') return
 
           const parsed = JSON.parse(rawContent) as {
-            tasks?: Array<Partial<ITask> & { start?: string | Date; end?: string | Date }>
+            tasks?: Array<Partial<ITask> & { start?: string | Date; end?: string | Date; resources?: number[] }>
             links?: ILink[]
+            resources?: GanttResource[]
             calendarConfig?: ProjectCalendarConfig
             durationUnit?: 'day' | 'hour'
           }
@@ -959,6 +1689,9 @@ export function GanttView() {
             duration: t.type === 'milestone' ? 0 : (t.duration ?? 1),
             progress: t.progress ?? 0,
             type: t.type || 'task',
+            resources: Array.isArray(t.resources)
+              ? t.resources.map(Number).filter((resourceId) => Number.isFinite(resourceId))
+              : undefined,
           }))
 
           const importedLinks: ILink[] = Array.isArray(parsed.links) ? parsed.links : []
@@ -976,6 +1709,13 @@ export function GanttView() {
 
           setTasks(scheduled)
           setLinks(importedLinks)
+          if (Array.isArray(parsed.resources)) {
+            setResourceList(
+              parsed.resources
+                .filter((resource) => Number.isFinite(resource.id) && typeof resource.label === 'string')
+                .map((resource) => ({ ...resource, id: Number(resource.id) }))
+            )
+          }
           setSelectedTaskId(null)
         } catch {
           alert('Failed to parse JSON file. Please ensure it is a valid MS Project export.')
@@ -1049,6 +1789,7 @@ export function GanttView() {
     setTasks(scheduled)
     setLinks(initialLinks)
     setSelectedTaskId(null)
+    setResourceList(sampleResources)
   }, [calendarConfig, durationUnit, isAutoSchedule])
 
   const editorItems = useMemo(() => {
@@ -1110,7 +1851,7 @@ export function GanttView() {
             style={{
               fontWeight: 600,
               fontSize: '0.82rem',
-              color: selectedTaskId === row.id ? '#107c41' : '#6b7280',
+              color: selectedTaskId != null && sameTaskId(selectedTaskId, row.id) ? '#107c41' : '#6b7280',
               display: 'inline-block',
               width: '100%',
               textAlign: 'center',
@@ -1186,7 +1927,9 @@ export function GanttView() {
         id: 'resourceNames',
         header: 'Resource Names',
         width: 150,
-        cell: ResourceNamesCell as unknown as IColumnConfig['cell'],
+        cell: (({ row }: { row: GanttTask }) => (
+          <ResourceNamesCell row={row} resources={resourceList} />
+        )) as unknown as IColumnConfig['cell'],
       },
       {
         id: 'add-task',
@@ -1195,7 +1938,7 @@ export function GanttView() {
         align: 'center',
       },
     ],
-    [durationUnit, handleDurationChange, handleFinishDateChange, handleStartDateChange, links, selectedTaskId]
+    [durationUnit, handleDurationChange, handleFinishDateChange, handleStartDateChange, links, resourceList, selectedTaskId]
   )
 
   const totalTasks = tasks.filter((t) => t.type !== 'summary').length
@@ -1203,7 +1946,7 @@ export function GanttView() {
   const completedTasks = tasks.filter((t) => t.progress === 100).length
 
   const selectedTaskIndex =
-    selectedTaskId != null ? tasks.findIndex((t) => t.id === selectedTaskId) : -1
+    selectedTaskId != null ? tasks.findIndex((task) => sameTaskId(task.id, selectedTaskId)) : -1
   const selectedTask = selectedTaskIndex >= 0 ? tasks[selectedTaskIndex] : null
   const canIndent = selectedTaskIndex > 0
   const canOutdent = selectedTask != null && selectedTask.parent != null
@@ -1333,6 +2076,19 @@ export function GanttView() {
               >
                 View
               </button>
+              {/* Resources Tab */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('resources')}
+                className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
+                  activeTab === 'resources'
+                    ? 'bg-muted text-foreground font-semibold border-b-2 border-primary'
+                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                }`}
+              >
+                <Users className="h-3.5 w-3.5" />
+                Resources
+              </button>
             </nav>
           </div>
 
@@ -1360,7 +2116,7 @@ export function GanttView() {
               <div className="flex items-center gap-1.5">
                 <Users className="h-3.5 w-3.5 text-amber-500" />
                 <span>
-                  <strong className="text-foreground">{sampleResources.length}</strong> Resources
+                  <strong className="text-foreground">{resourceList.length}</strong> Resources
                 </span>
               </div>
             </div>
@@ -1409,7 +2165,7 @@ export function GanttView() {
                   onClick={handleDeleteSelectedTask}
                   disabled={selectedTaskId == null}
                   className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 hover:border-destructive/30 transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none"
-                  title={selectedTaskId ? 'Delete selected task' : 'Select a task first to delete'}
+                  title={selectedTaskId != null ? 'Delete selected task' : 'Select a task first to delete'}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                   <span>Delete Task</span>
@@ -1575,39 +2331,85 @@ export function GanttView() {
               </div>
             </div>
           )}
+          {activeTab === 'resources' && (
+            <div className="flex items-center gap-3 overflow-x-auto py-1">
+              <button
+                type="button"
+                onClick={handleAddResource}
+                className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                Add resource
+              </button>
+              <span className="text-xs text-muted-foreground">
+                {resourceList.length} {resourceList.length === 1 ? 'resource' : 'resources'} available
+              </span>
+            </div>
+          )}
         </div>
       </header>
 
-      {/* Main Gantt View Area (Left Table + Right Timeline) */}
+      {/* Main Gantt View Area or Resource Management */}
       <main className="relative min-h-0 flex-1 w-full overflow-hidden">
-        <Willow>
-          <Gantt
-            init={handleInit}
-            tasks={api ? tasks : []}
-            links={links}
-            resources={resources}
-            scales={scalePresets[zoom]}
-            columns={columns}
-            gridWidth={540}
-            durationUnit={durationUnit}
-            cellHeight={35}
-            scaleHeight={30}
-            cellWidth={zoom === 'hour' ? 60 : 100}
-            highlightTime={handleHighlightTime}
-            onSelectTask={({ id }) => {
-              if (id !== undefined) {
-                setSelectedTaskId(id)
-              }
-            }}
-            onUpdateTask={handleUpdateTask}
-            onAddTask={handleAddTask}
-            onDeleteTask={handleDeleteTask}
-            onAddLink={handleAddLink}
-            onUpdateLink={handleUpdateLink}
-            onDeleteLink={handleDeleteLink}
+        {activeTab === 'resources' ? (
+          <ResourcesPanel
+            resources={resourceList}
+            tasks={tasks}
+            onAdd={handleAddResource}
+            onDelete={handleDeleteResource}
+            onChange={handleResourceChange}
           />
-          {api && <Editor api={api} items={editorItems} />}
-        </Willow>
+        ) : (
+          <div className="flex h-full min-h-0 w-full">
+            <div className="min-w-0 flex-1">
+              <Willow>
+                <Gantt
+                  init={handleInit}
+                  tasks={api ? tasks : []}
+                  links={links}
+                  resources={ganttResources}
+                  scales={scalePresets[zoom]}
+                  columns={columns}
+                  gridWidth={540}
+                  durationUnit={durationUnit}
+                  cellHeight={35}
+                  scaleHeight={30}
+                  cellWidth={zoom === 'hour' ? 60 : 100}
+                  highlightTime={handleHighlightTime}
+                  onSelectTask={({ id }) => {
+                    if (id !== undefined) {
+                      setSelectedTaskId(id)
+                    }
+                  }}
+                  onUpdateTask={handleUpdateTask}
+                  onAddTask={handleAddTask}
+                  onMoveTask={handleMoveTask}
+                  onDeleteTask={handleDeleteTask}
+                  onAddLink={handleAddLink}
+                  onUpdateLink={handleUpdateLink}
+                  onDeleteLink={handleDeleteLink}
+                />
+                {api && <Editor api={api} items={editorItems} />}
+              </Willow>
+            </div>
+            {selectedTask && (
+              <TaskInfoPanel
+                key={String(selectedTask.id)}
+                task={selectedTask}
+                tasks={tasks}
+                links={links}
+                resources={resourceList}
+                onClose={() => setSelectedTaskId(null)}
+                onTaskChange={handleTaskInfoChange}
+                onAddPredecessor={handleAddTaskInfoPredecessor}
+                onUpdatePredecessor={handleUpdateTaskInfoPredecessor}
+                onDeletePredecessor={handleDeleteTaskInfoPredecessor}
+                onToggleResource={handleToggleTaskResource}
+                onResourceChange={handleResourceChange}
+              />
+            )}
+          </div>
+        )}
       </main>
 
       {/* Project Calendar & Working Hours Modal */}
