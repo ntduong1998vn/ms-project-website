@@ -169,6 +169,15 @@ Always use `cn(...)` when combining dynamic class names or applying overrides.
 - **Linter**: **`oxlint`** via `pnpm lint`. Fast AST-based linting. ESLint is not used.
 - **Filesystem**: When operating in WSL2, keep the repository on the native Linux ext4 filesystem (`/home/...`) rather than Windows mounts (`/mnt/c/...`) to preserve full filesystem inotify performance for Vite HMR.
 
+### Codebase Scouting
+- Before scouting the codebase, check whether the `codegraph` CLI is installed and usable:
+  ```bash
+  command -v codegraph
+  codegraph --help
+  ```
+- When `codegraph` is available and its project index is usable, prefer it for symbol, relationship, navigation, and impact queries. Check the index with `codegraph status`; sync stale indexes with `codegraph sync` when appropriate.
+- If `codegraph` is unavailable, its index is incomplete, or the query is unsupported, fall back to the standard repository tools.
+
 ---
 
 ## Testing & QA
