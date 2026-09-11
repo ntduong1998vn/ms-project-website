@@ -1,8 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
-  Editor,
   Gantt,
-  getEditorItems,
   Willow,
   type IApi,
   type IColumnConfig,
@@ -96,6 +94,7 @@ function ResourceNamesCell({ row, resources }: { row: GanttTask; resources: Gant
 }
 
 type TaskWithResources = ITask & { resources?: number[] }
+type TaskWithPredecessors = ITask & { predecessors?: unknown }
 
 type DependencyType = ILink['type']
 
@@ -130,6 +129,92 @@ function collectTaskSubtreeIds(tasks: ITask[], rootId: string | number): Set<str
     }
   }
   return ids
+}
+
+function toPositiveNumericTaskId(value: unknown): number | null {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : null
+}
+
+function getNextNumericTaskId(tasks: ITask[]): number {
+  let nextId = 1
+  for (const task of tasks) {
+    const numericId = toPositiveNumericTaskId(task.id)
+    if (numericId !== null && numericId >= nextId) {
+      nextId = numericId + 1
+    }
+  }
+  while (tasks.some((task) => toPositiveNumericTaskId(task.id) === nextId)) {
+    nextId += 1
+  }
+  return nextId
+}
+
+function remapPredecessorValue(value: unknown, idMap: Map<string, number>): unknown {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string' || typeof value === 'number'
+      ? String(value).split(/[,\s]+/).filter(Boolean)
+      : null
+  if (!values) return value
+
+  const mapped = values
+    .map((predecessorId) => idMap.get(String(predecessorId)))
+    .filter((predecessorId): predecessorId is number => predecessorId !== undefined)
+  if (Array.isArray(value)) return mapped
+  if (typeof value === 'number') return mapped[0] ?? ''
+  return mapped.join(', ')
+}
+
+type ResequencedProject = {
+  tasks: ITask[]
+  links: ILink[]
+  selectedTaskId: string | number | null
+}
+
+function resequenceProject(
+  tasks: ITask[],
+  links: ILink[],
+  selectedTaskId: string | number | null
+): ResequencedProject {
+  const idMap = new Map<string, number>()
+  tasks.forEach((task, index) => {
+    if (task.id !== undefined) {
+      idMap.set(String(task.id), index + 1)
+    }
+  })
+
+  const resequencedTasks = tasks.map((task, index) => {
+    const resequencedTask = { ...task, id: index + 1 } as TaskWithPredecessors
+    if (task.parent !== undefined) {
+      const parentId = idMap.get(String(task.parent))
+      if (parentId === undefined) {
+        delete resequencedTask.parent
+      } else {
+        resequencedTask.parent = parentId
+      }
+    }
+    const predecessorValue = (task as TaskWithPredecessors).predecessors
+    if (predecessorValue !== undefined) {
+      resequencedTask.predecessors = remapPredecessorValue(predecessorValue, idMap)
+    }
+    return resequencedTask
+  })
+
+  const resequencedLinks: ILink[] = []
+  for (const link of links) {
+    const source = idMap.get(String(link.source))
+    const target = idMap.get(String(link.target))
+    if (source === undefined || target === undefined) continue
+    resequencedLinks.push({ ...link, source, target })
+  }
+
+  return {
+    tasks: resequencedTasks,
+    links: resequencedLinks,
+    selectedTaskId:
+      selectedTaskId === null ? null : idMap.get(String(selectedTaskId)) ?? null,
+  }
 }
 
 function subtreeEndIndex(tasks: ITask[], rootIndex: number): number {
@@ -960,6 +1045,12 @@ export function GanttView() {
     injectSvarCalendar(api, calendarConfig, durationUnit)
   }, [api, calendarConfig, durationUnit])
 
+  const handleTaskSelection = useCallback((ev: { id?: string | number } | undefined) => {
+    if (ev?.id !== undefined) {
+      setSelectedTaskId(ev.id)
+    }
+  }, [])
+
   const handleInit = useCallback((apiInstance: IApi) => {
     apiRef.current = apiInstance
     // Inject before publishing the API so the first controlled task refresh
@@ -967,13 +1058,14 @@ export function GanttView() {
     injectSvarCalendar(apiInstance, calendarConfigRef.current, durationUnitRef.current)
     setApi(apiInstance)
 
-    // Listen to task selection events from the chart
-    apiInstance.on('select-task', (ev: { id?: string | number } | undefined) => {
-      if (ev?.id !== undefined) {
-        setSelectedTaskId(ev.id)
-      }
+    // Route double-click/editor activation to the custom Task Info panel.
+    apiInstance.on('select-task', handleTaskSelection)
+    apiInstance.intercept('show-editor', (ev: { id?: string | number } | undefined) => {
+      handleTaskSelection(ev)
+      return false
     })
-  }, [])
+
+  }, [handleTaskSelection])
 
   // Auto-schedule aware task update
   const handleUpdateTask = useCallback(
@@ -1193,8 +1285,12 @@ export function GanttView() {
       target?: string | number
       mode?: TaskPlacementMode
     }) => {
-      const nextId = tasks.length > 0 ? Math.max(...tasks.map((item) => Number(item.id) || 0)) + 1 : 1
-      const taskId = task.id ?? nextId
+      const nextId = getNextNumericTaskId(tasks)
+      const incomingId = toPositiveNumericTaskId(task.id)
+      const taskId =
+        incomingId !== null && !tasks.some((item) => toPositiveNumericTaskId(item.id) === incomingId)
+          ? incomingId
+          : nextId
       const type = task.type || 'task'
       const start = task.start ? new Date(task.start) : getNextWorkingDay(new Date(), calendarConfig)
       const duration =
@@ -1263,14 +1359,13 @@ export function GanttView() {
           !idsToDelete.has(String(link.source)) &&
           !idsToDelete.has(String(link.target))
       )
+      const resequenced = resequenceProject(remainingTasks, remainingLinks, selectedTaskId)
       const scheduled = isAutoSchedule
-        ? autoScheduleTasks(remainingTasks, remainingLinks, calendarConfig, durationUnit)
-        : remainingTasks
+        ? autoScheduleTasks(resequenced.tasks, resequenced.links, calendarConfig, durationUnit)
+        : resequenced.tasks
       setTasks(scheduled)
-      setLinks(remainingLinks)
-      if (selectedTaskId != null && idsToDelete.has(String(selectedTaskId))) {
-        setSelectedTaskId(null)
-      }
+      setLinks(resequenced.links)
+      setSelectedTaskId(resequenced.selectedTaskId)
     },
     [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks]
   )
@@ -1457,7 +1552,7 @@ export function GanttView() {
 
   // Toolbar Actions: Add Task
   const handleAddTaskAction = useCallback(() => {
-    const nextId = tasks.length > 0 ? Math.max(...tasks.map((t) => Number(t.id) || 0)) + 1 : 1
+    const nextId = getNextNumericTaskId(tasks)
     const today = getNextWorkingDay(new Date(), calendarConfig)
     const duration = durationUnit === 'hour' ? (calendarConfig.workingHoursPerDay || 8) : 1
     const endDate = calculateEndDate(today, duration, calendarConfig, durationUnit)
@@ -1489,7 +1584,7 @@ export function GanttView() {
 
   // Toolbar Actions: Add Milestone
   const handleAddMilestoneAction = useCallback(() => {
-    const nextId = tasks.length > 0 ? Math.max(...tasks.map((t) => Number(t.id) || 0)) + 1 : 1
+    const nextId = getNextNumericTaskId(tasks)
     const today = getNextWorkingDay(new Date(), calendarConfig)
 
     const selectedTask = selectedTaskId != null
@@ -1605,21 +1700,13 @@ export function GanttView() {
         !idsToDelete.has(String(link.source)) &&
         !idsToDelete.has(String(link.target))
     )
-
-    if (apiRef.current) {
-      try {
-        apiRef.current.exec('delete-task', { id: idToDelete })
-      } catch {
-        // Handled by state
-      }
-    }
-
+    const resequenced = resequenceProject(remainingTasks, remainingLinks, null)
     const scheduled = isAutoSchedule
-      ? autoScheduleTasks(remainingTasks, remainingLinks, calendarConfig, durationUnit)
-      : remainingTasks
+      ? autoScheduleTasks(resequenced.tasks, resequenced.links, calendarConfig, durationUnit)
+      : resequenced.tasks
 
     setTasks(scheduled)
-    setLinks(remainingLinks)
+    setLinks(resequenced.links)
     setSelectedTaskId(null)
   }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks])
 
@@ -1792,20 +1879,6 @@ export function GanttView() {
     setResourceList(sampleResources)
   }, [calendarConfig, durationUnit, isAutoSchedule])
 
-  const editorItems = useMemo(() => {
-    return getEditorItems().map((item) => {
-      if (item.comp === 'date') {
-        return {
-          ...item,
-          config: {
-            ...item.config,
-            time: durationUnit === 'hour',
-          },
-        }
-      }
-      return item
-    })
-  }, [durationUnit])
   const handleDurationChange = useCallback(
     (id: string | number, duration: number) => {
       handleUpdateTask({
@@ -2376,11 +2449,7 @@ export function GanttView() {
                   scaleHeight={30}
                   cellWidth={zoom === 'hour' ? 60 : 100}
                   highlightTime={handleHighlightTime}
-                  onSelectTask={({ id }) => {
-                    if (id !== undefined) {
-                      setSelectedTaskId(id)
-                    }
-                  }}
+                  onSelectTask={handleTaskSelection}
                   onUpdateTask={handleUpdateTask}
                   onAddTask={handleAddTask}
                   onMoveTask={handleMoveTask}
@@ -2389,7 +2458,6 @@ export function GanttView() {
                   onUpdateLink={handleUpdateLink}
                   onDeleteLink={handleDeleteLink}
                 />
-                {api && <Editor api={api} items={editorItems} />}
               </Willow>
             </div>
             {selectedTask && (
