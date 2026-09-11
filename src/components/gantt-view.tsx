@@ -10,7 +10,7 @@ import {
   type ITask,
 } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
-import { DropdownMenu } from 'radix-ui'
+import { Dialog, DropdownMenu } from 'radix-ui'
 import {
   sampleLinks,
   sampleResources,
@@ -39,7 +39,9 @@ import {
   Zap,
   ZapOff,
   ChevronDown,
+  Plus,
 } from 'lucide-react'
+import { CsvImportDialog, type CsvImportData, type CsvTaskMapping } from '@/components/csv-import-dialog'
 import { CalendarSettingsDialog } from '@/components/calendar-settings-dialog'
 import {
   autoScheduleTasks,
@@ -53,6 +55,7 @@ import {
   inclusiveFinishToExclusiveEnd,
   type ProjectCalendarConfig,
 } from '@/lib/scheduler'
+import { parseCsv, serializeCsv } from '@/lib/csv'
 
 function formatDate(date: Date | string | undefined | null): string {
   if (!date) return ''
@@ -90,6 +93,106 @@ function ResourceNamesCell({ row, resources }: { row: GanttTask; resources: Gant
     <span style={{ fontSize: '0.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
       {names || '-'}
     </span>
+  )
+}
+
+function WorkCell({
+  row,
+  workingHoursPerDay,
+  durationUnit,
+}: {
+  row: GanttTask
+  workingHoursPerDay: number
+  durationUnit: 'day' | 'hour'
+}) {
+  const duration = Number(row.duration)
+  const workHours =
+    Number.isFinite(duration) && duration >= 0
+      ? durationUnit === 'day'
+        ? duration * workingHoursPerDay
+        : duration
+      : 0
+  return (
+    <span className="px-1 text-xs tabular-nums text-foreground/80">
+      {Number.isInteger(workHours) ? workHours : workHours.toFixed(2)}h
+    </span>
+  )
+}
+
+function AddColumnHeaderCell({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Add a Gantt column"
+      title="Add a Gantt column"
+      onClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onOpen()
+      }}
+      className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+    </button>
+  )
+}
+
+function ColumnChooserDialog({
+  open,
+  workVisible,
+  onOpenChange,
+  onAddWork,
+}: {
+  open: boolean
+  workVisible: boolean
+  onOpenChange: (open: boolean) => void
+  onAddWork: () => void
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        {open && (
+          <Dialog.Content
+            className="fixed top-1/2 left-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-2xl"
+            aria-describedby="column-chooser-description"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-border pb-3">
+              <div>
+                <Dialog.Title className="text-base font-semibold text-foreground">
+                  Add Gantt column
+                </Dialog.Title>
+                <Dialog.Description id="column-chooser-description" className="mt-1 text-xs text-muted-foreground">
+                  Choose a column to display in the task grid.
+                </Dialog.Description>
+              </div>
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  aria-label="Close add column dialog"
+                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </Dialog.Close>
+            </div>
+            <button
+              type="button"
+              onClick={onAddWork}
+              disabled={workVisible}
+              aria-pressed={workVisible}
+              className="mt-4 flex w-full items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-60"
+            >
+              <span>
+                <span className="block font-medium text-foreground">Work</span>
+                <span className="block text-xs text-muted-foreground">Calculated effort in hours</span>
+              </span>
+              <span className="text-xs text-muted-foreground">{workVisible ? 'Already shown' : 'Add'}</span>
+            </button>
+          </Dialog.Content>
+        )}
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 
@@ -212,9 +315,73 @@ function resequenceProject(
   return {
     tasks: resequencedTasks,
     links: resequencedLinks,
-    selectedTaskId:
-      selectedTaskId === null ? null : idMap.get(String(selectedTaskId)) ?? null,
+    selectedTaskId: selectedTaskId === null ? null : idMap.get(String(selectedTaskId)) ?? null,
   }
+}
+function csvValue(row: string[], mapping: CsvTaskMapping, field: keyof CsvTaskMapping): string {
+  const column = mapping[field]
+  return column === null ? '' : (row[column] ?? '').trim()
+}
+
+function parseCsvDateValue(value: string): Date | undefined {
+  if (!value) return undefined
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date : undefined
+}
+
+function parseCsvResourceTokens(value: string): string[] {
+  const trimmed = value.trim()
+  if (!trimmed) return []
+  if (/[;|]/.test(trimmed)) {
+    return trimmed.split(/[;|]+/).map((item) => item.trim()).filter(Boolean)
+  }
+  const commaParts = trimmed.split(',').map((item) => item.trim()).filter(Boolean)
+  // Support legacy numeric ID lists while keeping a quoted name such as "Doe, Jane" intact.
+  return commaParts.length > 1 && commaParts.every((item) => /^\d+$/.test(item))
+    ? commaParts
+    : [trimmed]
+}
+
+function parseCsvDependencyType(value: string): DependencyType {
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 's2s' || normalized === 'ss') return 's2s'
+  if (normalized === 'e2e' || normalized === 'ff') return 'e2e'
+  if (normalized === 's2e' || normalized === 'sf') return 's2e'
+  return 'e2s'
+}
+
+function parseCsvTaskId(value: string, fallback: number, usedIds: Set<string>): string | number {
+  const numeric = toPositiveNumericTaskId(value)
+  if (numeric !== null && !usedIds.has(String(numeric))) {
+    usedIds.add(String(numeric))
+    return numeric
+  }
+  const text = value.trim()
+  if (text && !usedIds.has(text)) {
+    usedIds.add(text)
+    return text
+  }
+  let nextId = fallback
+  while (usedIds.has(String(nextId))) nextId += 1
+  usedIds.add(String(nextId))
+  return nextId
+}
+
+function hasParentCycle(
+  taskId: string | number,
+  parentId: string | number,
+  parents: Map<string, string | number>
+): boolean {
+  const visited = new Set<string>()
+  let current: string | number | undefined = parentId
+  while (current !== undefined) {
+    const key = String(current)
+    if (key === String(taskId)) return true
+    if (visited.has(key)) return true
+    visited.add(key)
+    current = parents.get(key)
+  }
+  return false
 }
 
 function subtreeEndIndex(tasks: ITask[], rootIndex: number): number {
@@ -1011,6 +1178,9 @@ export function GanttView() {
   const [calendarConfig, setCalendarConfig] = useState<ProjectCalendarConfig>(defaultCalendarConfig)
   const [isAutoSchedule, setIsAutoSchedule] = useState<boolean>(true)
   const [isCalendarDialogOpen, setIsCalendarDialogOpen] = useState<boolean>(false)
+  const [csvImportData, setCsvImportData] = useState<CsvImportData | null>(null)
+  const [isColumnChooserOpen, setIsColumnChooserOpen] = useState<boolean>(false)
+  const [isWorkColumnVisible, setIsWorkColumnVisible] = useState<boolean>(false)
   const [activeTab, setActiveTab] = useState<RibbonTab>('task')
   const [selectedTaskId, setSelectedTaskId] = useState<string | number | null>(null)
 
@@ -1673,14 +1843,7 @@ export function GanttView() {
       return task
     })
 
-    if (apiRef.current) {
-      try {
-        apiRef.current.exec('indent-task', { id: selectedTaskId, mode: false })
-      } catch {
-        // Handled by state
-      }
-    }
-
+    // React state owns hierarchy changes; avoid the store action, which can dereference a stale task ID.
     const scheduled = isAutoSchedule
       ? autoScheduleTasks(finalTasks, links, calendarConfig, durationUnit)
       : finalTasks
@@ -1710,109 +1873,227 @@ export function GanttView() {
     setSelectedTaskId(null)
   }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks])
 
-  // File Menu: Export JSON
-  const handleExportJson = useCallback(() => {
-    const exportData = {
-      version: '1.0',
-      projectName: 'Website Redesign & Launch Plan',
-      exportedAt: new Date().toISOString(),
-      calendarConfig,
-      durationUnit,
-      tasks: tasks.map((t) => ({
-        ...t,
-        start: t.start ? formatToDateString(new Date(t.start)) : undefined,
-        end: t.end ? formatToDateString(new Date(t.end)) : undefined,
-      })),
-      links,
-      resources: resourceList,
-    }
+  // File Menu: Export CSV
+  const handleExportCsv = useCallback(() => {
+    const headers = [
+      'id',
+      'text',
+      'start',
+      'end',
+      'duration',
+      'type',
+      'progress',
+      'parent',
+      'resourceNames',
+      'predecessors',
+      'predecessorTypes',
+    ]
+    const rows = tasks.map((task) => {
+      const incoming = links.filter((link) => String(link.target) === String(task.id))
+      const resources = (task as TaskWithResources).resources ?? []
+      return [
+        task.id,
+        task.text,
+        task.start ? formatToDateString(new Date(task.start)) : '',
+        task.end ? formatToDateString(new Date(task.end)) : '',
+        task.duration ?? '',
+        task.type ?? 'task',
+        task.progress ?? '',
+        task.parent ?? '',
+        resources
+          .map((id) => resourceList.find((resource) => resource.id === id)?.label ?? String(id))
+          .join(';'),
+        incoming.map((link) => link.source).join(';'),
+        incoming.map((link) => link.type).join(';'),
+      ]
+    })
 
-    const jsonString = JSON.stringify(exportData, null, 2)
-    const blob = new Blob([jsonString], { type: 'application/json' })
+    const blob = new Blob([serializeCsv(headers, rows)], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `ms-project-schedule-${new Date().toISOString().slice(0, 10)}.json`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `ms-project-schedule-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
     URL.revokeObjectURL(url)
-  }, [calendarConfig, durationUnit, links, resourceList, tasks])
+  }, [links, resourceList, tasks])
 
-  // File Menu: Import JSON
-  const handleImportFile = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
-      if (!file) return
+  const handleImportFile = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
 
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        try {
-          const rawContent = event.target?.result
-          if (typeof rawContent !== 'string') return
+    const reader = new FileReader()
+    reader.onload = (loadEvent) => {
+      try {
+        const rawContent = loadEvent.target?.result
+        if (typeof rawContent !== 'string') return
+        const parsed = parseCsv(rawContent)
+        const headers = parsed[0] ?? []
+        const rows = parsed.slice(1)
+        if (headers.length === 0 || headers.every((header) => header.trim() === '')) {
+          alert('Invalid CSV: A header row is required.')
+          return
+        }
+        setCsvImportData({ fileName: file.name, headers, rows })
+      } catch {
+        alert('Failed to read CSV file. Please ensure it contains a valid header row.')
+      } finally {
+        event.target.value = ''
+      }
+    }
+    reader.readAsText(file)
+  }, [])
 
-          const parsed = JSON.parse(rawContent) as {
-            tasks?: Array<Partial<ITask> & { start?: string | Date; end?: string | Date; resources?: number[] }>
-            links?: ILink[]
-            resources?: GanttResource[]
-            calendarConfig?: ProjectCalendarConfig
-            durationUnit?: 'day' | 'hour'
-          }
+  const handleImportCsv = useCallback(
+    (mapping: CsvTaskMapping) => {
+      if (!csvImportData) return
 
-          if (!parsed.tasks || !Array.isArray(parsed.tasks)) {
-            alert('Invalid JSON: Missing "tasks" array in file.')
-            return
-          }
+      const rows = csvImportData.rows.filter((row) => row.some((cell) => cell.trim() !== ''))
+      const textColumn = mapping.text
+      const usableRows =
+        textColumn === null
+          ? rows
+          : rows.filter((row) => csvValue(row, mapping, 'text') !== '')
+      if (usableRows.length === 0) {
+        alert('No importable task rows were found. Map a task name column or provide non-empty rows.')
+        return
+      }
 
-          const newCalendarConfig = parsed.calendarConfig || calendarConfig
-          const newUnit = parsed.durationUnit || durationUnit
+      const usedIds = new Set<string>()
+      const rawIdMap = new Map<string, string | number>()
+      const entries = usableRows.map((row, index) => {
+        const rawId = csvValue(row, mapping, 'id')
+        const id = parseCsvTaskId(rawId, index + 1, usedIds)
+        if (rawId && !rawIdMap.has(rawId)) rawIdMap.set(rawId, id)
+        if (!rawId && !rawIdMap.has(String(index + 1))) rawIdMap.set(String(index + 1), id)
+        if (!rawIdMap.has(String(id))) rawIdMap.set(String(id), id)
+        return { row, id }
+      })
 
-          const importedTasks: ITask[] = parsed.tasks.map((t, idx) => ({
-            ...t,
-            id: t.id ?? idx + 1,
-            text: t.text || `Task ${idx + 1}`,
-            start: t.start ? new Date(t.start) : new Date(),
-            end: t.end ? new Date(t.end) : new Date(),
-            duration: t.type === 'milestone' ? 0 : (t.duration ?? 1),
-            progress: t.progress ?? 0,
-            type: t.type || 'task',
-            resources: Array.isArray(t.resources)
-              ? t.resources.map(Number).filter((resourceId) => Number.isFinite(resourceId))
-              : undefined,
-          }))
-
-          const importedLinks: ILink[] = Array.isArray(parsed.links) ? parsed.links : []
-
-          if (parsed.calendarConfig) {
-            setCalendarConfig(newCalendarConfig)
-          }
-          if (parsed.durationUnit) {
-            setDurationUnit(newUnit)
-          }
-
-          const scheduled = isAutoSchedule
-            ? autoScheduleTasks(importedTasks, importedLinks, newCalendarConfig, newUnit)
-            : importedTasks
-
-          setTasks(scheduled)
-          setLinks(importedLinks)
-          if (Array.isArray(parsed.resources)) {
-            setResourceList(
-              parsed.resources
-                .filter((resource) => Number.isFinite(resource.id) && typeof resource.label === 'string')
-                .map((resource) => ({ ...resource, id: Number(resource.id) }))
-            )
-          }
-          setSelectedTaskId(null)
-        } catch {
-          alert('Failed to parse JSON file. Please ensure it is a valid MS Project export.')
-        } finally {
-          e.target.value = ''
+      const parents = new Map<string, string | number>()
+      for (const entry of entries) {
+        const rawParent = csvValue(entry.row, mapping, 'parent')
+        const parent = rawParent ? rawIdMap.get(rawParent) : undefined
+        if (
+          parent !== undefined &&
+          !sameTaskId(parent, entry.id) &&
+          !hasParentCycle(entry.id, parent, parents)
+        ) {
+          parents.set(String(entry.id), parent)
         }
       }
-      reader.readAsText(file)
+
+      const nextResources = [...resourceList]
+      const resourceIdsByName = new Map<string, number>()
+      for (const resource of nextResources) {
+        const key = resource.label.trim().toLowerCase()
+        if (key && !resourceIdsByName.has(key)) resourceIdsByName.set(key, resource.id)
+      }
+      let nextResourceId =
+        nextResources.reduce((max, resource) => Math.max(max, resource.id), 0) + 1
+      const resolveImportedResources = (value: string): number[] => {
+        const resolvedIds: number[] = []
+        for (const token of parseCsvResourceTokens(value)) {
+          const numericId = toPositiveNumericTaskId(token)
+          const knownNumericId =
+            numericId !== null && nextResources.some((resource) => resource.id === numericId)
+              ? numericId
+              : undefined
+          const nameKey = token.toLowerCase()
+          const existingId = knownNumericId ?? resourceIdsByName.get(nameKey)
+          const resourceId =
+            existingId ??
+            (() => {
+              const createdId = nextResourceId
+              nextResourceId += 1
+              nextResources.push({ id: createdId, label: token })
+              resourceIdsByName.set(nameKey, createdId)
+              return createdId
+            })()
+          if (!resolvedIds.includes(resourceId)) resolvedIds.push(resourceId)
+        }
+        return resolvedIds
+      }
+
+      const importedTasks: ITask[] = entries.map(({ row, id }, index) => {
+        const typeValue = csvValue(row, mapping, 'type').toLowerCase()
+        const type: ITask['type'] =
+          typeValue === 'summary' || typeValue === 'milestone' ? typeValue : 'task'
+        const start = parseCsvDateValue(csvValue(row, mapping, 'start')) ?? getNextWorkingDay(new Date(), calendarConfig)
+        const parsedDuration = Number(csvValue(row, mapping, 'duration'))
+        const duration =
+          type === 'milestone'
+            ? 0
+            : Number.isFinite(parsedDuration) && parsedDuration >= 0
+              ? parsedDuration
+              : 1
+        const parsedEnd = parseCsvDateValue(csvValue(row, mapping, 'end'))
+        const end =
+          type === 'milestone'
+            ? start
+            : parsedEnd && parsedEnd.getTime() >= start.getTime()
+              ? parsedEnd
+              : calculateEndDate(start, duration, calendarConfig, durationUnit)
+        const parsedProgress = Number(csvValue(row, mapping, 'progress'))
+        const progress = Number.isFinite(parsedProgress)
+          ? Math.min(100, Math.max(0, parsedProgress))
+          : 0
+        const resources = resolveImportedResources(csvValue(row, mapping, 'resources'))
+        const task: ITask = {
+          id,
+          text: csvValue(row, mapping, 'text') || `Task ${index + 1}`,
+          start,
+          end,
+          duration,
+          progress,
+          type,
+          open: type === 'summary',
+          ...(parents.has(String(id)) ? { parent: parents.get(String(id)) } : {}),
+          ...(resources.length > 0 ? { resources } : {}),
+        }
+        return task
+      })
+
+      const importedLinks: ILink[] = []
+      const relationshipKeys = new Set<string>()
+      for (const { row, id: target } of entries) {
+        const predecessorIds = csvValue(row, mapping, 'predecessors')
+          .split(/[,;|\s]+/)
+          .map((value) => value.trim())
+          .filter(Boolean)
+        const predecessorTypes = csvValue(row, mapping, 'predecessorTypes')
+          .split(/[,;|\s]+/)
+          .map((value) => value.trim())
+          .filter(Boolean)
+        predecessorIds.forEach((rawSource, index) => {
+          const source = rawIdMap.get(rawSource)
+          if (source === undefined || sameTaskId(source, target)) return
+          const key = `${String(source)}->${String(target)}`
+          if (relationshipKeys.has(key)) return
+          relationshipKeys.add(key)
+          importedLinks.push({
+            id: importedLinks.length + 1,
+            source,
+            target,
+            type: parseCsvDependencyType(predecessorTypes[index] ?? 'e2s'),
+          })
+        })
+      }
+
+      if (nextResources.length !== resourceList.length) {
+        setResourceList(nextResources)
+      }
+
+      const scheduled = isAutoSchedule
+        ? autoScheduleTasks(importedTasks, importedLinks, calendarConfig, durationUnit)
+        : importedTasks
+      setTasks(scheduled)
+      setLinks(importedLinks)
+      setSelectedTaskId(null)
+      setCsvImportData(null)
     },
-    [calendarConfig, durationUnit, isAutoSchedule]
+    [calendarConfig, csvImportData, durationUnit, isAutoSchedule, resourceList]
   )
 
   // File Menu: New Project
@@ -1910,6 +2191,15 @@ export function GanttView() {
     },
     [handleUpdateTask]
   )
+
+  const handleOpenColumnChooser = useCallback(() => {
+    setIsColumnChooserOpen(true)
+  }, [])
+
+  const handleAddWorkColumn = useCallback(() => {
+    setIsWorkColumnVisible(true)
+    setIsColumnChooserOpen(false)
+  }, [])
   const columns: IColumnConfig[] = useMemo(
     () => [
       {
@@ -1958,6 +2248,23 @@ export function GanttView() {
           />
         )) as unknown as IColumnConfig['cell'],
       },
+      ...(isWorkColumnVisible
+        ? [
+            {
+              id: 'work',
+              header: 'Work',
+              width: 90,
+              align: 'center' as const,
+              cell: (({ row }: { row: GanttTask }) => (
+                <WorkCell
+                  row={row}
+                  workingHoursPerDay={calendarConfig.workingHoursPerDay}
+                  durationUnit={durationUnit}
+                />
+              )) as unknown as IColumnConfig['cell'],
+            },
+          ]
+        : []),
       {
         id: 'start',
         header: 'Start',
@@ -2006,12 +2313,26 @@ export function GanttView() {
       },
       {
         id: 'add-task',
-        header: '',
+        header: {
+          text: '',
+          cell: () => <AddColumnHeaderCell onOpen={handleOpenColumnChooser} />,
+        },
         width: 38,
         align: 'center',
       },
     ],
-    [durationUnit, handleDurationChange, handleFinishDateChange, handleStartDateChange, links, resourceList, selectedTaskId]
+    [
+      calendarConfig,
+      durationUnit,
+      handleDurationChange,
+      handleFinishDateChange,
+      handleOpenColumnChooser,
+      handleStartDateChange,
+      isWorkColumnVisible,
+      links,
+      resourceList,
+      selectedTaskId,
+    ]
   )
 
   const totalTasks = tasks.filter((t) => t.type !== 'summary').length
@@ -2026,11 +2347,11 @@ export function GanttView() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
-      {/* Hidden file input for JSON import */}
+      {/* Hidden file input for CSV import */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".json"
+        accept=".csv,text/csv"
         onChange={handleImportFile}
         className="hidden"
       />
@@ -2077,13 +2398,13 @@ export function GanttView() {
                       </div>
                     </DropdownMenu.Item>
                     <DropdownMenu.Item
-                      onSelect={handleExportJson}
+                      onSelect={handleExportCsv}
                       className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs outline-none hover:bg-muted focus:bg-muted transition-colors"
                     >
                       <Download className="h-4 w-4 text-blue-500" />
                       <div>
-                        <div className="font-medium">Export Schedule (JSON)</div>
-                        <div className="text-[10px] text-muted-foreground">Save project tasks and calendar to file</div>
+                        <div className="font-medium">Export Schedule (CSV)</div>
+                        <div className="text-[10px] text-muted-foreground">Save tasks, hierarchy, resources & dependencies</div>
                       </div>
                     </DropdownMenu.Item>
                     <DropdownMenu.Item
@@ -2092,8 +2413,8 @@ export function GanttView() {
                     >
                       <Upload className="h-4 w-4 text-emerald-500" />
                       <div>
-                        <div className="font-medium">Import Schedule (JSON)</div>
-                        <div className="text-[10px] text-muted-foreground">Load previously saved schedule</div>
+                        <div className="font-medium">Import Schedule (CSV)</div>
+                        <div className="text-[10px] text-muted-foreground">Review columns and map task fields</div>
                       </div>
                     </DropdownMenu.Item>
                     <DropdownMenu.Separator className="my-1 h-px bg-border" />
@@ -2478,6 +2799,21 @@ export function GanttView() {
             )}
           </div>
         )}
+      <CsvImportDialog
+        key={csvImportData ? `${csvImportData.fileName}:${csvImportData.headers.join('|')}` : 'empty'}
+        data={csvImportData}
+        open={csvImportData !== null}
+        onOpenChange={(open) => {
+          if (!open) setCsvImportData(null)
+        }}
+        onConfirm={handleImportCsv}
+      />
+      <ColumnChooserDialog
+        open={isColumnChooserOpen}
+        workVisible={isWorkColumnVisible}
+        onOpenChange={setIsColumnChooserOpen}
+        onAddWork={handleAddWorkColumn}
+      />
       </main>
 
       {/* Project Calendar & Working Hours Modal */}
