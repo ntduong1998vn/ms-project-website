@@ -166,3 +166,29 @@
   padding-bottom: 22px !important;
   box-sizing: border-box !important;
 }
+
+/* Non-working days and holidays shading on timeline */
+.gantt-holiday-cell {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+}
+.dark .gantt-holiday-cell {
+  background-color: rgba(239, 68, 68, 0.18) !important;
+}
+.wx-cell.gantt-holiday-cell {
+  background-color: rgba(239, 68, 68, 0.18) !important;
+  color: #dc2626 !important;
+  font-weight: 600;
+}
+
+.gantt-weekend-cell {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+.dark .gantt-weekend-cell {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+.wx-cell.gantt-weekend-cell {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+.dark .wx-cell.gantt-weekend-cell {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}

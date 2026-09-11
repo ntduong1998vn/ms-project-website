@@ -2,7 +2,7 @@ export type GanttTask = {
   id: number
   text: string
   start: Date
-  end: Date
+  end?: Date
   duration: number
   progress: number
   type: "task" | "summary" | "milestone"
