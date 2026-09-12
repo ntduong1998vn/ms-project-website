@@ -1,4 +1,5 @@
-import type { GanttLink, GanttResource, GanttTask } from '@/types/gantt'
+import type { ILink } from '@svar-ui/react-gantt'
+import type { GanttResource, TaskWithResources } from '@/types/gantt'
 
 export const sampleResources: GanttResource[] = [
   { id: 1, label: 'Alex Johnson (PM)' },
@@ -7,7 +8,7 @@ export const sampleResources: GanttResource[] = [
   { id: 4, label: 'Emily Davis (Frontend)' },
 ]
 
-export const sampleTasks: GanttTask[] = [
+export const sampleTasks: TaskWithResources[] = [
   {
     id: 1,
     text: '1. Planning & Design',
@@ -108,7 +109,7 @@ export const sampleTasks: GanttTask[] = [
   },
 ]
 
-export const sampleLinks: GanttLink[] = [
+export const sampleLinks: ILink[] = [
   { id: 1, source: 2, target: 3, type: 'e2s' },
   { id: 2, source: 3, target: 5, type: 'e2s' },
   { id: 3, source: 4, target: 5, type: 'e2s' },

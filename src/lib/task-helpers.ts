@@ -97,6 +97,14 @@ export function resequenceProject(
     }
     return resequencedTask
   })
+  const parentIds = new Set(
+    resequencedTasks
+      .filter((task) => task.parent !== undefined)
+      .map((task) => String(task.parent))
+  )
+  resequencedTasks.forEach((task) => {
+    if (!parentIds.has(String(task.id))) delete task.open
+  })
 
   const resequencedLinks: ILink[] = []
   for (const link of links) {

@@ -1,7 +1,7 @@
-import { GanttView } from '@/components/gantt-view'
+import { GanttPage } from '@/pages/gantt-page'
 
 function App() {
-  return <GanttView />
+  return <GanttPage />
 }
 
 export default App

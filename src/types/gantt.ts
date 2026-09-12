@@ -1,21 +1,9 @@
-export type GanttTask = {
-  id: number
-  text: string
-  start: Date
-  end?: Date
-  duration: number
-  progress: number
-  type: "task" | "summary" | "milestone"
-  parent?: number
-  open?: boolean
-  resources?: number[]
-}
+import type { ITask } from '@svar-ui/react-gantt'
 
-export type GanttLink = {
-  id: number
-  source: number
-  target: number
-  type: "e2s" | "s2s" | "e2e" | "s2e"
+export type TaskWithResources = ITask & {
+  id: NonNullable<ITask['id']>
+  text: NonNullable<ITask['text']>
+  resources?: number[]
 }
 
 export type GanttResource = {

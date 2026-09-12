@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Dialog } from 'radix-ui'
 import { FileSpreadsheet, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import type { CsvImportData, CsvTaskField, CsvTaskMapping } from '@/types/gantt-csv'
 
 const csvTaskFields = [
   { key: 'id', label: 'Task ID', required: false },
@@ -16,15 +17,6 @@ const csvTaskFields = [
   { key: 'predecessors', label: 'Predecessor task IDs', required: false },
   { key: 'predecessorTypes', label: 'Dependency types', required: false },
 ] as const
-
-export type CsvTaskField = (typeof csvTaskFields)[number]['key']
-export type CsvTaskMapping = Record<CsvTaskField, number | null>
-
-export interface CsvImportData {
-  fileName: string
-  headers: string[]
-  rows: string[][]
-}
 
 const normalizeHeader = (header: string) => header.toLowerCase().replace(/[^a-z0-9]/g, '')
 
