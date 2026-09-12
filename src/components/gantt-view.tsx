@@ -1489,11 +1489,6 @@ export function GanttView() {
     const duration = durationUnit === 'hour' ? (calendarConfig.workingHoursPerDay || 8) : 1
     const endDate = calculateEndDate(today, duration, calendarConfig, durationUnit)
 
-    const selectedTask = selectedTaskId != null
-      ? tasks.find((task) => sameTaskId(task.id, selectedTaskId))
-      : null
-    const parentId = selectedTask?.type === 'summary' ? selectedTask.id : selectedTask?.parent
-
     const newTask: ITask = {
       id: nextId,
       text: `New Task ${nextId}`,
@@ -1502,7 +1497,6 @@ export function GanttView() {
       duration,
       progress: 0,
       type: 'task',
-      ...(parentId !== undefined ? { parent: parentId } : {}),
     }
 
     const newTasksList = [...tasks, newTask]
@@ -1512,7 +1506,7 @@ export function GanttView() {
 
     setTasks(scheduled)
     setSelectedTaskId(nextId)
-  }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks])
+  }, [calendarConfig, durationUnit, isAutoSchedule, links, tasks])
 
   // Toolbar Actions: Add Milestone
   const handleAddMilestoneAction = useCallback(() => {
@@ -2526,7 +2520,7 @@ export function GanttView() {
                   resources={ganttResources}
                   scales={scalePresets[zoom]}
                   columns={columns}
-                  gridWidth={540}
+                  gridWidth={920}
                   durationUnit={durationUnit}
                   cellHeight={35}
                   scaleHeight={30}
