@@ -962,7 +962,6 @@ export function GanttView() {
   const [resourceList, setResourceList] = useState<GanttResource[]>(sampleResources)
 
   const [api, setApi] = useState<IApi | null>(null)
-  const apiRef = useRef<IApi | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const calendarConfigRef = useRef(calendarConfig)
   const durationUnitRef = useRef(durationUnit)
@@ -984,7 +983,6 @@ export function GanttView() {
   }, [])
 
   const handleInit = useCallback((apiInstance: IApi) => {
-    apiRef.current = apiInstance
     // Inject before publishing the API so the first controlled task refresh
     // observes the project calendar instead of SVAR's calendar-less default.
     injectSvarCalendar(apiInstance, calendarConfigRef.current, durationUnitRef.current)
@@ -1554,15 +1552,6 @@ export function GanttView() {
       }
       return t
     })
-
-    if (apiRef.current) {
-      try {
-        apiRef.current.exec('indent-task', { id: selectedTaskId, mode: true })
-      } catch {
-        // Handled by state
-      }
-    }
-
     const scheduled = isAutoSchedule
       ? autoScheduleTasks(updatedTasks, links, calendarConfig, durationUnit)
       : updatedTasks
@@ -1575,34 +1564,15 @@ export function GanttView() {
     const currTask = tasks.find((task) => sameTaskId(task.id, selectedTaskId))
     if (!currTask || currTask.parent == null) return // Already root level
 
-    const parentTask = tasks.find((task) => sameTaskId(task.id, currTask.parent))
-    const newParent = parentTask ? parentTask.parent : undefined
-
-    const updatedTasks = tasks.map((t) => {
-      if (sameTaskId(t.id, selectedTaskId)) {
-        const copy = { ...t }
-        if (newParent !== undefined) {
-          copy.parent = newParent
-        } else {
-          delete copy.parent
-        }
-        return copy
-      }
-      return t
-    })
-
-    const remainingChildren = updatedTasks.filter((task) => sameTaskId(task.parent, currTask.parent))
-    const finalTasks = updatedTasks.map((task) => {
-      if (sameTaskId(task.id, currTask.parent) && remainingChildren.length === 0) {
-        return { ...task, type: 'task' }
-      }
-      return task
-    })
+    // Move the complete subtree after its current parent's subtree. Updating only
+    // the parent field can split that subtree and leave the Gantt store invalid.
+    const movedTasks = moveTaskAtPlacement(tasks, selectedTaskId, currTask.parent, 'after')
+    if (movedTasks === tasks) return
 
     // React state owns hierarchy changes; avoid the store action, which can dereference a stale task ID.
     const scheduled = isAutoSchedule
-      ? autoScheduleTasks(finalTasks, links, calendarConfig, durationUnit)
-      : finalTasks
+      ? autoScheduleTasks(movedTasks, links, calendarConfig, durationUnit)
+      : movedTasks
     setTasks(scheduled)
   }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks])
 

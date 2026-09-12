@@ -244,9 +244,12 @@ export function moveTaskAtPlacement(
     oldParent !== undefined &&
     !nextTasks.some((task) => sameTaskId(task.parent, oldParent))
   ) {
-    nextTasks = nextTasks.map((task) =>
-      sameTaskId(task.id, oldParent) ? { ...task, type: 'task' } : task
-    )
+    nextTasks = nextTasks.map((task) => {
+      if (!sameTaskId(task.id, oldParent)) return task
+      const demoted = { ...task, type: 'task' }
+      delete demoted.open
+      return demoted
+    })
   }
   return nextTasks
 }

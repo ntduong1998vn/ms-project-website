@@ -233,6 +233,23 @@ describe('task placement helpers', () => {
     expect(down[3].parent).toBe(1)
   })
 
+  it('outdents a nested subtree after the old parent subtree', () => {
+    const tasks = [
+      task(1, 'root', { type: 'summary', open: true }),
+      task(2, 'old parent', { type: 'summary', open: true, parent: 1 }),
+      task(3, 'moving task', { parent: 2, progress: 25 }),
+      task(4, 'remaining sibling', { parent: 2 }),
+      task(5, 'next root'),
+    ]
+
+    const result = moveTaskAtPlacement(tasks, 3, 2, 'after')
+
+    expect(ids(result)).toEqual([1, 2, 4, 3, 5])
+    expect(result[3]).toMatchObject({ id: 3, text: 'moving task', parent: 1, progress: 25 })
+    expect(result[1]).toMatchObject({ id: 2, type: 'summary' })
+    expect(result[2].parent).toBe(2)
+  })
+
   it('preserves unrelated tasks with undefined IDs while moving a task', () => {
     const unnamed = { id: undefined, text: 'unnamed', type: 'task' } as ITask
     const tasks = [task(1, 'root'), unnamed, task(2, 'moving')]
@@ -290,6 +307,6 @@ describe('task placement helpers', () => {
 
     expect(ids(result)).toEqual([1, 3, 2])
     expect(result[0]).toMatchObject({ id: 1, type: 'task' })
-    expect(result[2]).not.toHaveProperty('parent')
+    expect(result[0]).not.toHaveProperty('open')
   })
 })
