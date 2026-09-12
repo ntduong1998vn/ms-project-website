@@ -32,4 +32,28 @@ If you are developing a production application, we recommend enabling type-aware
 }
 ```
 
+## Git push verification
+
+The repository installs a tracked Git `pre-push` hook through the `prepare` lifecycle script. Run:
+
+```bash
+pnpm install
+```
+
+This configures Git to use `.githooks/pre-push`. If dependencies are already installed, configure the hook explicitly with:
+
+```bash
+pnpm run prepare
+```
+
+Before every push, the hook runs these checks in order and blocks the push if any command fails:
+
+```bash
+pnpm test
+pnpm run test:coverage
+pnpm lint
+```
+
+Do not bypass the hook with `git push --no-verify`; changes that fail tests, coverage thresholds, or lint must not be pushed. Run `pnpm build` separately when validating the production bundle.
+
 See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.

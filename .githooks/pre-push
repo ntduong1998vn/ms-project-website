@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  printf '%s\n' 'pre-push: pnpm is required but was not found on PATH.' >&2
+  exit 1
+fi
+
+printf '%s\n' 'pre-push: running tests...'
+pnpm test
+
+printf '%s\n' 'pre-push: checking test coverage...'
+pnpm run test:coverage
+
+printf '%s\n' 'pre-push: running lint...'
+pnpm lint
+
+printf '%s\n' 'pre-push: all checks passed.'
