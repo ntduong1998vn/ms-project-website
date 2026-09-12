@@ -351,7 +351,7 @@ interface SchedulableTask extends ITask {
 /**
  * Auto-reschedule tasks according to predecessors and project calendar.
  * Recursively updates successors when predecessors change.
- * Updates summary tasks to encompass all children.
+ * Updates non-milestone parent tasks to encompass all children.
  */
 export function autoScheduleTasks(
   tasks: ITask[],
@@ -359,7 +359,12 @@ export function autoScheduleTasks(
   calendar: ProjectCalendarConfig,
   durationUnit: 'day' | 'hour'
 ): ITask[] {
-  // Normalize tasks
+  // Drop invalid milestone parent links before any scheduling or roll-up work.
+  const milestoneIds = new Set(
+    tasks
+      .filter((task) => task.type === 'milestone' && task.id !== undefined)
+      .map((task) => String(task.id))
+  )
   const taskMap = new Map<string | number, SchedulableTask>()
   for (const t of tasks) {
     if (t.id === undefined) continue
@@ -371,9 +376,13 @@ export function autoScheduleTasks(
     const e = isMilestone
       ? normalizeDate(validStart)
       : calculateEndDate(validStart, dur, calendar, durationUnit)
+    const normalizedTask = { ...t }
+    if (t.parent !== undefined && milestoneIds.has(String(t.parent))) {
+      delete normalizedTask.parent
+    }
 
     taskMap.set(t.id, {
-      ...t,
+      ...normalizedTask,
       id: t.id,
       start: validStart,
       end: e,
@@ -522,16 +531,23 @@ export function autoScheduleTasks(
     }
   }
 
-  // Update summary tasks (parents) to encompass all children
+  // Any non-milestone task with children acts as a date/duration container.
+  // Keep its explicit type unchanged; only milestones are forbidden from parenting.
   const updatedTasks = Array.from(taskMap.values())
-  const summaryIds = updatedTasks.filter((t) => t.type === 'summary').map((t) => t.id)
+  const parentIds = updatedTasks
+    .filter(
+      (task) =>
+        task.type !== 'milestone' &&
+        updatedTasks.some((candidate) => String(candidate.parent) === String(task.id))
+    )
+    .map((task) => task.id)
 
   for (let pass = 0; pass < 5; pass++) {
-    for (const summaryId of summaryIds) {
-      const summaryTask = taskMap.get(summaryId)
+    for (const parentId of parentIds) {
+      const summaryTask = taskMap.get(parentId)
       if (!summaryTask) continue
 
-      const children = updatedTasks.filter((t) => String(t.parent) === String(summaryId))
+      const children = updatedTasks.filter((t) => String(t.parent) === String(parentId))
       if (children.length === 0) continue
 
       let minStart = children[0].start
@@ -571,10 +587,12 @@ export function autoScheduleTasks(
       )
     }
   }
-
   return tasks.map((t) => {
     if (t.id === undefined) return t
     const updated = taskMap.get(t.id)
-    return updated ? ({ ...t, ...updated } as ITask) : t
+    if (!updated) return t
+    const merged = { ...t, ...updated } as ITask
+    if (t.parent !== undefined && updated.parent === undefined) delete merged.parent
+    return merged
   })
 }

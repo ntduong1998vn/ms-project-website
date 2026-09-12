@@ -432,4 +432,36 @@ describe('autoScheduleTasks dependency semantics', () => {
     expect(dateString(scheduledTask(result, 31).start)).toBe('2026-09-01')
     expect(dateString(scheduledTask(result, 31).end!)).toBe('2026-09-02')
   })
+  it('aggregates dates and duration into a regular task parent without changing its type', () => {
+    const result = autoScheduleTasks(
+      [
+        { ...task(40, localDate(2026, 9, 7), 5), open: false },
+        { ...task(41, localDate(2026, 9, 1), 1), parent: 40 },
+      ],
+      [],
+      workWeekCalendar,
+      'day'
+    )
+
+    const parent = scheduledTask(result, 40)
+    expect(parent).toMatchObject({ type: 'task', open: false, duration: 1 })
+    expect(dateString(parent.start)).toBe('2026-09-01')
+    expect(dateString(parent.end!)).toBe('2026-09-02')
+    expect(dateString(scheduledTask(result, 41).start)).toBe('2026-09-01')
+    expect(dateString(scheduledTask(result, 41).end!)).toBe('2026-09-02')
+  })
+  it('drops raw children assigned to a milestone parent', () => {
+    const result = autoScheduleTasks(
+      [
+        task(50, localDate(2026, 9, 7), 0, 'milestone'),
+        { ...task(51, localDate(2026, 9, 8), 2), parent: 50 },
+      ],
+      [],
+      workWeekCalendar,
+      'day'
+    )
+
+    expect(scheduledTask(result, 50).type).toBe('milestone')
+    expect(scheduledTask(result, 51)).not.toHaveProperty('parent')
+  })
 })

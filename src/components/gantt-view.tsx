@@ -61,6 +61,7 @@ import {
   collectTaskSubtreeIds,
   getNextNumericTaskId,
   hasParentCycle,
+  isTaskParentAllowed,
   moveTaskAtPlacement,
   resequenceProject,
   sameTaskId,
@@ -146,6 +147,16 @@ function AddColumnHeaderCell({ onOpen }: { onOpen: () => void }) {
     </button>
   )
 }
+function AddTaskCell({ row }: { row: GanttTask }) {
+  if (row.type === 'milestone') return null
+
+  return (
+    <div style={{ textAlign: 'center' }}>
+      <i className="wx-9DAESAHW wx-action-icon wxi-plus" data-action="add-task" />
+    </div>
+  )
+}
+
 
 function ColumnChooserDialog({
   open,
@@ -1046,7 +1057,18 @@ export function GanttView() {
       setTasks((prev) => {
         const existing = prev.find((t) => String(t.id) === String(id))
         if (!existing) {
-          return prev.map((t) => (String(t.id) === String(id) ? ({ ...t, ...task } as ITask) : t))
+          return prev.map((t) => {
+            if (String(t.id) !== String(id)) return t
+            const updated = { ...t, ...task } as ITask
+            if (task.parent !== undefined && !isTaskParentAllowed(prev, task.parent)) {
+              if (t.parent !== undefined && isTaskParentAllowed(prev, t.parent)) {
+                updated.parent = t.parent
+              } else {
+                delete updated.parent
+              }
+            }
+            return updated
+          })
         }
 
         const existingStart = existing.start ? new Date(existing.start) : new Date()
@@ -1060,6 +1082,13 @@ export function GanttView() {
           new Date(task.end).getTime() !== existingEnd.getTime()
 
         let updatedTask = { ...existing, ...task } as ITask
+        if (task.parent !== undefined && !isTaskParentAllowed(prev, task.parent)) {
+          if (existing.parent !== undefined && isTaskParentAllowed(prev, existing.parent)) {
+            updatedTask.parent = existing.parent
+          } else {
+            delete updatedTask.parent
+          }
+        }
 
         const isDurationChanged =
           task.duration !== undefined &&
@@ -1245,6 +1274,7 @@ export function GanttView() {
       }
 
       const newTasksList = addTaskAtPlacement(tasks, newTask, target, mode)
+      if (newTasksList === tasks) return
       const scheduled = isAutoSchedule
         ? autoScheduleTasks(newTasksList, links, calendarConfig, durationUnit)
         : newTasksList
@@ -1514,7 +1544,14 @@ export function GanttView() {
     const selectedTask = selectedTaskId != null
       ? tasks.find((task) => sameTaskId(task.id, selectedTaskId))
       : null
-    const parentId = selectedTask?.type === 'summary' ? selectedTask.id : selectedTask?.parent
+    const selectedTaskHasChildren =
+      selectedTask?.id !== undefined &&
+      tasks.some((task) => sameTaskId(task.parent, selectedTask.id))
+    const parentId =
+      selectedTask && (selectedTask.type === 'summary' || selectedTaskHasChildren)
+        ? selectedTask.id
+        : selectedTask?.parent
+    const allowedParentId = isTaskParentAllowed(tasks, parentId) ? parentId : undefined
 
     const newMilestone: ITask = {
       id: nextId,
@@ -1524,7 +1561,7 @@ export function GanttView() {
       duration: 0,
       progress: 0,
       type: 'milestone',
-      ...(parentId !== undefined ? { parent: parentId } : {}),
+      ...(allowedParentId !== undefined ? { parent: allowedParentId } : {}),
     }
 
     const newTasksList = [...tasks, newMilestone]
@@ -1543,12 +1580,13 @@ export function GanttView() {
     if (idx <= 0) return // First task cannot be indented
 
     const prevTask = tasks[idx - 1]
+    if (prevTask.type === 'milestone') return
     const updatedTasks = tasks.map((t, i) => {
       if (sameTaskId(t.id, selectedTaskId)) {
         return { ...t, parent: prevTask.id }
       }
       if (i === idx - 1) {
-        return { ...t, type: 'summary', open: true }
+        return { ...t, open: true }
       }
       return t
     })
@@ -1697,18 +1735,29 @@ export function GanttView() {
         return { row, id }
       })
 
+      const importedTypes = new Map<string, ITask['type']>()
+      for (const entry of entries) {
+        const typeValue = csvValue(entry.row, mapping, 'type').toLowerCase()
+        importedTypes.set(
+          String(entry.id),
+          typeValue === 'summary' || typeValue === 'milestone' ? typeValue : 'task'
+        )
+      }
+
       const parents = new Map<string, string | number>()
       for (const entry of entries) {
         const rawParent = csvValue(entry.row, mapping, 'parent')
         const parent = rawParent ? rawIdMap.get(rawParent) : undefined
         if (
           parent !== undefined &&
+          importedTypes.get(String(parent)) !== 'milestone' &&
           !sameTaskId(parent, entry.id) &&
           !hasParentCycle(entry.id, parent, parents)
         ) {
           parents.set(String(entry.id), parent)
         }
       }
+      const parentIds = new Set(Array.from(parents.values(), (parent) => String(parent)))
 
       const nextResources = [...resourceList]
       const resourceIdsByName = new Map<string, number>()
@@ -1774,7 +1823,7 @@ export function GanttView() {
           duration,
           progress,
           type,
-          open: type === 'summary',
+          open: type === 'summary' || parentIds.has(String(id)),
           ...(parents.has(String(id)) ? { parent: parents.get(String(id)) } : {}),
           ...(resources.length > 0 ? { resources } : {}),
         }
@@ -2043,6 +2092,7 @@ export function GanttView() {
           text: '',
           cell: () => <AddColumnHeaderCell onOpen={handleOpenColumnChooser} />,
         },
+        cell: AddTaskCell as unknown as IColumnConfig['cell'],
         width: 38,
         align: 'center',
       },

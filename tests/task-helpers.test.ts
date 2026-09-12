@@ -6,6 +6,7 @@ import {
   collectTaskSubtreeIds,
   getNextNumericTaskId,
   hasParentCycle,
+  isTaskParentAllowed,
   moveTaskAtPlacement,
   remapPredecessorValue,
   resequenceProject,
@@ -163,7 +164,7 @@ describe('task placement helpers', () => {
     expect(after[2].parent).toBe(1)
   })
 
-  it('adds a child after the target subtree and promotes the target to summary', () => {
+  it('adds a child without promoting a regular task to summary', () => {
     const tasks = [
       task(1, 'parent'),
       task(2, 'child', { parent: 1 }),
@@ -174,9 +175,32 @@ describe('task placement helpers', () => {
     const result = addTaskAtPlacement(tasks, task(5, 'new child'), 1, 'child')
 
     expect(ids(result)).toEqual([1, 2, 3, 5, 4])
-    expect(result[0]).toMatchObject({ type: 'summary', open: true })
+    expect(result[0]).toMatchObject({ type: 'task', open: true })
     expect(result[3].parent).toBe(1)
   })
+
+  it('keeps an explicit summary type when adding a child', () => {
+    const tasks = [task(1, 'summary', { type: 'summary' }), task(2, 'root')]
+
+    const result = addTaskAtPlacement(tasks, task(3, 'new child'), 1, 'child')
+
+    expect(result[0]).toMatchObject({ type: 'summary', open: true })
+    expect(result[1]).toMatchObject({ id: 3, parent: 1 })
+  })
+  it('rejects milestone parents while allowing regular task parents', () => {
+    const tasks = [
+      task(1, 'regular parent'),
+      task(2, 'milestone parent', { type: 'milestone' }),
+    ]
+
+    expect(isTaskParentAllowed(tasks, 1)).toBe(true)
+    expect(isTaskParentAllowed(tasks, 2)).toBe(false)
+    expect(addTaskAtPlacement(tasks, task(3, 'child'), 2, 'child')).toBe(tasks)
+
+    const moved = moveTaskAtPlacement([...tasks, task(3, 'child')], 3, 2, 'child')
+    expect(moved).toEqual([...tasks, task(3, 'child')])
+  })
+
 
   it('appends when placement has no usable target', () => {
     const tasks = [task(1), task(2)]
@@ -196,7 +220,7 @@ describe('task placement helpers', () => {
     expect(addTaskAtPlacement(tasks, incoming, 1, undefined)).toEqual([...tasks, incoming])
   })
 
-  it('moves a child successfully, promotes its new parent, and retains an old summary with siblings', () => {
+  it('moves a child without promoting its new parent or changing the old summary', () => {
     const tasks = [
       task(1, 'old parent', { type: 'summary', open: true }),
       task(2, 'moving child', { parent: 1 }),
@@ -208,8 +232,21 @@ describe('task placement helpers', () => {
 
     expect(ids(result)).toEqual([1, 3, 4, 2])
     expect(result[0]).toMatchObject({ id: 1, type: 'summary', open: true })
-    expect(result[2]).toMatchObject({ id: 4, type: 'summary', open: true })
+    expect(result[2]).toMatchObject({ id: 4, type: 'task', open: true })
     expect(result[3]).toMatchObject({ id: 2, parent: 4 })
+  })
+
+  it('keeps an explicit summary type when moving its last child away', () => {
+    const tasks = [
+      task(1, 'parent', { type: 'summary', open: true }),
+      task(2, 'child', { parent: 1 }),
+      task(3, 'other'),
+    ]
+
+    const result = moveTaskAtPlacement(tasks, 2, 3, 'after')
+
+    expect(ids(result)).toEqual([1, 3, 2])
+    expect(result[0]).toMatchObject({ id: 1, type: 'summary', open: true })
   })
 
   it('moves nested siblings up and down while retaining their parent', () => {
@@ -296,17 +333,4 @@ describe('task placement helpers', () => {
     expect(moveTaskAtPlacement(tasks, 99, 1, 'before')).toBe(tasks)
   })
 
-  it('demotes an old summary after moving its last child away', () => {
-    const tasks = [
-      task(1, 'parent', { type: 'summary', open: true }),
-      task(2, 'child', { parent: 1 }),
-      task(3, 'other'),
-    ]
-
-    const result = moveTaskAtPlacement(tasks, 2, 3, 'after')
-
-    expect(ids(result)).toEqual([1, 3, 2])
-    expect(result[0]).toMatchObject({ id: 1, type: 'task' })
-    expect(result[0]).not.toHaveProperty('open')
-  })
 })

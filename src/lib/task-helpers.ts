@@ -80,11 +80,12 @@ export function resequenceProject(
     }
   })
 
+  const taskTypes = new Map(tasks.map((task) => [String(task.id), task.type]))
   const resequencedTasks = tasks.map((task, index) => {
     const resequencedTask = { ...task, id: index + 1 } as TaskWithPredecessors
     if (task.parent !== undefined) {
       const parentId = idMap.get(String(task.parent))
-      if (parentId === undefined) {
+      if (parentId === undefined || taskTypes.get(String(task.parent)) === 'milestone') {
         delete resequencedTask.parent
       } else {
         resequencedTask.parent = parentId
@@ -128,19 +129,19 @@ export function hasParentCycle(
   }
   return false
 }
-
-function subtreeEndIndex(tasks: ITask[], rootIndex: number): number {
-  const root = tasks[rootIndex]
-  if (!root || root.id === undefined) return rootIndex
-  const subtreeIds = collectTaskSubtreeIds(tasks, root.id)
-  let end = rootIndex + 1
-  while (end < tasks.length) {
-    const task = tasks[end]
-    if (task.parent === undefined || !subtreeIds.has(String(task.parent))) break
-    end += 1
-  }
-  return end
+export function isTaskParentAllowed(tasks: ITask[], parentId: string | number | undefined): boolean {
+  if (parentId === undefined) return true
+  const parent = tasks.find((task) => sameTaskId(task.id, parentId))
+  return parent?.type !== 'milestone'
 }
+
+function withoutMilestoneParent(tasks: ITask[], task: ITask): ITask {
+  if (task.parent === undefined || isTaskParentAllowed(tasks, task.parent)) return task
+  const rootTask = { ...task }
+  delete rootTask.parent
+  return rootTask
+}
+
 
 export function addTaskAtPlacement(
   tasks: ITask[],
@@ -148,15 +149,16 @@ export function addTaskAtPlacement(
   target: string | number | undefined,
   mode: TaskPlacementMode | undefined
 ): ITask[] {
-  if (target === undefined || mode === undefined) return [...tasks, task]
+  if (target === undefined || mode === undefined) return [...tasks, withoutMilestoneParent(tasks, task)]
   const targetIndex = tasks.findIndex((candidate) => sameTaskId(candidate.id, target))
-  if (targetIndex < 0) return [...tasks, task]
-
+  if (targetIndex < 0) return [...tasks, withoutMilestoneParent(tasks, task)]
   const targetTask = tasks[targetIndex]
-  const placedTask = { ...task }
+  if (mode === 'child' && targetTask.type === 'milestone') return tasks
+
+  const placedTask = { ...withoutMilestoneParent(tasks, task) }
   if (mode === 'child') {
     placedTask.parent = targetTask.id
-  } else if (targetTask.parent !== undefined) {
+  } else if (targetTask.parent !== undefined && isTaskParentAllowed(tasks, targetTask.parent)) {
     placedTask.parent = targetTask.parent
   } else {
     delete placedTask.parent
@@ -167,9 +169,7 @@ export function addTaskAtPlacement(
   const nextTasks =
     mode === 'child'
       ? tasks.map((candidate) =>
-          sameTaskId(candidate.id, targetTask.id)
-            ? { ...candidate, type: 'summary', open: true }
-            : candidate
+          sameTaskId(candidate.id, targetTask.id) ? { ...candidate, open: true } : candidate
         )
       : tasks
   return [...nextTasks.slice(0, insertionIndex), placedTask, ...nextTasks.slice(insertionIndex)]
@@ -206,6 +206,8 @@ export function moveTaskAtPlacement(
   const targetIndex = tasks.findIndex((task) => sameTaskId(task.id, targetId))
   if (targetIndex < 0) return tasks
   const targetTask = tasks[targetIndex]
+  if (placement === 'child' && targetTask.type === 'milestone') return tasks
+  if (placement !== 'child' && !isTaskParentAllowed(tasks, targetTask.parent)) return tasks
   const remaining = tasks.filter((task) => task.id === undefined || !movedIds.has(String(task.id)))
   const remainingTargetIndex = remaining.findIndex((task) => sameTaskId(task.id, targetId))
   if (remainingTargetIndex < 0) return tasks
@@ -225,31 +227,33 @@ export function moveTaskAtPlacement(
     placement === 'after' || placement === 'child'
       ? subtreeEndIndex(remaining, remainingTargetIndex)
       : remainingTargetIndex
-  let nextTasks = [
-    ...remaining.slice(0, insertionIndex),
-    ...movedBlock,
-    ...remaining.slice(insertionIndex),
-  ]
-
-  if (placement === 'child') {
-    nextTasks = nextTasks.map((task) =>
-      sameTaskId(task.id, targetTask.id) && task.type !== 'summary'
-        ? { ...task, type: 'summary', open: true }
-        : task
-    )
-  }
-
-  const oldParent = movedTask.parent
-  if (
-    oldParent !== undefined &&
-    !nextTasks.some((task) => sameTaskId(task.parent, oldParent))
-  ) {
-    nextTasks = nextTasks.map((task) => {
-      if (!sameTaskId(task.id, oldParent)) return task
-      const demoted = { ...task, type: 'task' }
-      delete demoted.open
-      return demoted
-    })
-  }
+  const nextTasks =
+    placement === 'child'
+      ? [
+          ...remaining.slice(0, insertionIndex),
+          ...movedBlock,
+          ...remaining.slice(insertionIndex),
+        ].map((task) =>
+          sameTaskId(task.id, targetTask.id) ? { ...task, open: true } : task
+        )
+      : [
+          ...remaining.slice(0, insertionIndex),
+          ...movedBlock,
+          ...remaining.slice(insertionIndex),
+        ]
   return nextTasks
 }
+
+function subtreeEndIndex(tasks: ITask[], rootIndex: number): number {
+  const root = tasks[rootIndex]
+  if (!root || root.id === undefined) return rootIndex
+  const subtreeIds = collectTaskSubtreeIds(tasks, root.id)
+  let end = rootIndex + 1
+  while (end < tasks.length) {
+    const task = tasks[end]
+    if (task.parent === undefined || !subtreeIds.has(String(task.parent))) break
+    end += 1
+  }
+  return end
+}
+
