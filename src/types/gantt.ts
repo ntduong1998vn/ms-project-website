@@ -11,7 +11,6 @@ export type TaskWithResources = ITask & {
 export type GanttResource = {
   id: number
   label: string
-  role?: string
   avatar?: string
   externalSource?: string
   externalKey?: string      // remote user id

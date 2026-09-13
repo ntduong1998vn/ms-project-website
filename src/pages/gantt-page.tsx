@@ -66,6 +66,7 @@ export function GanttPage() {
     onDurationChange: actions.handleDurationChange,
     onStartDateChange: actions.handleStartDateChange,
     onFinishDateChange: actions.handleFinishDateChange,
+    onResourcesChange: actions.handleResourcesChange,
     onOpenColumnChooser: actions.handleOpenColumnChooser,
   })
 

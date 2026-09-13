@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "prepare": "git config core.hooksPath .githooks"
+    "prepare": "if [ -d .git ]; then git config core.hooksPath .githooks; fi"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

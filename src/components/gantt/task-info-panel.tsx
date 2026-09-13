@@ -321,13 +321,6 @@ export function TaskInfoPanel({
                           aria-label={`Edit resource ${resource.label}`}
                           className="w-full border-0 bg-transparent p-0 text-xs font-medium text-foreground outline-none focus:ring-0"
                         />
-                        <input
-                          value={resource.role ?? ''}
-                          onChange={(event) => onResourceChange(resource.id, { role: event.target.value })}
-                          placeholder="Role (optional)"
-                          aria-label={`Edit role for ${resource.label}`}
-                          className="w-full border-0 bg-transparent p-0 text-[11px] text-muted-foreground outline-none focus:ring-0"
-                        />
                       </div>
                     </div>
                   )

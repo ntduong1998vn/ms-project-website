@@ -81,18 +81,18 @@ describe('usage allocation model', () => {
     expect(period.capacityHours).toBe(40)
   })
 
-  it('builds Role and Phase group roots with exact rollups', () => {
+  it('builds Resource and Phase group roots with exact rollups', () => {
     const phase = { id: 10, text: 'Design phase', type: 'summary' } as ITask
     const phaseTask = task(1, new Date(2026, 8, 7), new Date(2026, 8, 8), 1)
     phaseTask.parent = phase.id
-    const roleModel = buildUsageModel({
+    const resourceModel = buildUsageModel({
       mode: 'resource',
       tasks: [task(1, new Date(2026, 8, 7), new Date(2026, 8, 8), 1, [1])],
-      resources: [{ id: 1, label: 'Alex', role: 'Design' }],
+      resources: [{ id: 1, label: 'Alex' }],
       calendar: defaultCalendarConfig,
       durationUnit: 'day',
       timescale: 'day',
-      groupBy: 'role',
+      groupBy: 'resource',
     })
     const phaseModel = buildUsageModel({
       mode: 'task',
@@ -104,9 +104,9 @@ describe('usage allocation model', () => {
       groupBy: 'phase',
     })
 
-    expect(roleModel.rows[0].label).toBe('Design')
-    expect(roleModel.rows[0].children[0].label).toBe('Alex')
-    expect(roleModel.rows[0].totalWork).toBe(8)
+    expect(resourceModel.rows[0].label).toBe('Alex')
+    expect(resourceModel.rows[0].children[0].label).toBe('Task 1')
+    expect(resourceModel.rows[0].totalWork).toBe(8)
     expect(phaseModel.rows[0].label).toBe('Design phase')
     expect(phaseModel.rows[0].children[0].children[0].label).toBe('Unassigned')
     expect(phaseModel.totalWork).toBe(8)
@@ -288,11 +288,11 @@ describe('usage allocation model', () => {
     })
   })
 
-  it('groups multiple resources by role with exact resource and role rollups', () => {
-    const roleResources: GanttResource[] = [
-      { id: 1, label: 'Alex', role: 'Design' },
+  it('groups multiple resources with exact resource rollups', () => {
+    const groupedResources: GanttResource[] = [
+      { id: 1, label: 'Alex' },
       { id: 2, label: 'Sam' },
-      { id: 3, label: 'Zoe', role: 'Design' },
+      { id: 3, label: 'Zoe' },
     ]
     const model = buildUsageModel({
       mode: 'resource',
@@ -301,19 +301,16 @@ describe('usage allocation model', () => {
         task(11, new Date(2026, 8, 7), new Date(2026, 8, 9), 2, [2]),
         task(12, new Date(2026, 8, 7), new Date(2026, 8, 9), 2, [1, 3]),
       ],
-      resources: roleResources,
+      resources: groupedResources,
       calendar: defaultCalendarConfig,
       durationUnit: 'day',
       timescale: 'day',
-      groupBy: 'role',
+      groupBy: 'resource',
     })
 
-    expect(model.rows.map((row) => row.label)).toEqual(['Design', 'Unassigned role'])
-    expect(model.rows[0].children.map((row) => row.label)).toEqual(['Alex', 'Zoe'])
-    expect(model.rows[0].children.map((row) => row.totalWork)).toEqual([16, 8])
-    expect(model.rows[0].totalWork).toBe(24)
-    expect(model.rows[1].children.map((row) => row.label)).toEqual(['Sam'])
-    expect(model.rows[1].totalWork).toBe(16)
+    expect(model.rows.map((row) => row.label)).toEqual(['Alex', 'Sam', 'Zoe'])
+    expect(model.rows.map((row) => row.totalWork)).toEqual([16, 16, 8])
+    expect(model.rows[0].children.map((row) => row.label)).toEqual(['Task 10', 'Task 12'])
     expect(model.totalWork).toBe(40)
   })
 
@@ -370,8 +367,8 @@ describe('usage allocation model', () => {
 
   it('keeps matching resource ancestors and recalculates filtered work', () => {
     const filterResources: GanttResource[] = [
-      { id: 1, label: 'Alex', role: 'Design' },
-      { id: 2, label: 'Sam', role: 'QA' },
+      { id: 1, label: 'Alex' },
+      { id: 2, label: 'Sam' },
     ]
     const apiTask = task(27, new Date(2026, 8, 7), new Date(2026, 8, 8), 1, [1])
     apiTask.text = 'API delivery'
@@ -389,23 +386,23 @@ describe('usage allocation model', () => {
       filter: 'API',
       groupBy: 'resource',
     })
-    const roleFilterModel = buildUsageModel({
+    const resourceFilterModel = buildUsageModel({
       mode: 'resource',
       tasks: [apiTask, documentationTask, qaTask],
       resources: filterResources,
       calendar: defaultCalendarConfig,
       durationUnit: 'day',
       timescale: 'day',
-      filter: 'Design',
+      filter: 'Alex',
       groupBy: 'resource',
     })
 
     expect(taskFilterModel.rows.map((row) => row.label)).toEqual(['Alex'])
     expect(taskFilterModel.rows[0].children.map((row) => row.label)).toEqual(['API delivery'])
     expect(taskFilterModel.rows[0].totalWork).toBe(8)
-    expect(roleFilterModel.rows.map((row) => row.label)).toEqual(['Alex'])
-    expect(roleFilterModel.rows[0].children.map((row) => row.label)).toEqual(['API delivery', 'Documentation'])
-    expect(roleFilterModel.rows[0].totalWork).toBe(16)
+    expect(resourceFilterModel.rows.map((row) => row.label)).toEqual(['Alex'])
+    expect(resourceFilterModel.rows[0].children.map((row) => row.label)).toEqual(['API delivery', 'Documentation'])
+    expect(resourceFilterModel.rows[0].totalWork).toBe(16)
   })
 
   it('suppresses overallocation metadata recursively throughout Task Usage', () => {
@@ -431,23 +428,48 @@ describe('usage allocation model', () => {
       Object.values(row.peakDayByPeriod).every((peak) => peak === undefined)
     )).toBe(true)
   })
-  it('propagates truthful peak metadata to Role roots from resource children', () => {
+  it('propagates truthful peak metadata to resource roots', () => {
     const model = markResourceOverallocation(buildUsageModel({
       mode: 'resource',
       tasks: [
         task(33, new Date(2026, 8, 7), new Date(2026, 8, 8), 1, [1]),
         task(34, new Date(2026, 8, 7), new Date(2026, 8, 8), 1, [1]),
       ],
-      resources: [{ id: 1, label: 'Alex', role: 'Design' }],
+      resources: [{ id: 1, label: 'Alex' }],
       calendar: defaultCalendarConfig,
       durationUnit: 'day',
       timescale: 'month',
-      groupBy: 'role',
+      groupBy: 'resource',
     }), defaultCalendarConfig)
     const root = model.rows[0]
     const peak = root.peakDayByPeriod['2026-09-01']
     expect(root.overallocatedPeriods).toEqual(['2026-09-01'])
     expect(peak).toMatchObject({ date: '2026-09-07', dailyWork: 16, dailyCapacity: 8, resourceLabel: 'Alex' })
+  })
+
+  it('tolerates malformed tasks and resources without breaking rollups', () => {
+    const noResources = task(50, new Date(2026, 8, 7), new Date(2026, 8, 8), 1)
+    delete (noResources as TaskWithResources).resources
+    const noDates = { id: 51, text: 'No dates', duration: 1, type: 'task' } as ITask
+    const zeroDuration = task(52, new Date(2026, 8, 7), new Date(2026, 8, 8), 0, [1])
+    const unknownResource = task(53, new Date(2026, 8, 7), new Date(2026, 8, 8), 1, [99])
+    const noText = task(54, new Date(2026, 8, 7), new Date(2026, 8, 8), 1, [1])
+    delete noText.text
+    delete noText.type
+    const model = buildUsageModel({
+      mode: 'resource',
+      tasks: [noResources, noDates, zeroDuration, unknownResource, noText],
+      resources: [{ id: 1, label: '' }],
+      calendar: { ...defaultCalendarConfig, workingHoursPerDay: undefined } as typeof defaultCalendarConfig,
+      durationUnit: 'day',
+      timescale: 'day',
+      groupBy: 'resource',
+    })
+
+    expect(model.rows.map((row) => row.label)).toEqual(['Resource 1'])
+    expect(model.rows[0].children.map((row) => row.label)).toEqual(['Task 52', 'Task 54'])
+    expect(model.rows[0].children.map((row) => row.secondaryLabel)).toEqual(['task', 'Task'])
+    expect(model.rows[0].totalWork).toBe(8)
   })
 
   it('preserves a matching Phase ancestor when only the phase name matches', () => {
