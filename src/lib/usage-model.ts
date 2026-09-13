@@ -4,7 +4,7 @@ import { formatToDateString, isWorkingDay, normalizeDate, type ProjectCalendarCo
 
 export type UsageMode = 'resource' | 'task'
 export type UsageTimescale = 'day' | 'week' | 'month'
-export type ResourceGroupBy = 'resource' | 'role'
+export type ResourceGroupBy = 'resource'
 export type TaskGroupBy = 'task' | 'phase'
 export type UsageGroupBy = ResourceGroupBy | TaskGroupBy
 
@@ -219,16 +219,10 @@ export function buildUsageModel({
   resources.forEach((resource) => dailyWorkByResource.set(resource.id, {}))
 
   if (mode === 'resource') {
-    const sortedResources = [...resources].sort((left, right) => {
-      if (groupBy === 'role') {
-        const roleCompare = compareText(left.role || 'Unassigned role', right.role || 'Unassigned role')
-        if (roleCompare !== 0) return roleCompare
-      }
-      return compareText(resourceName(left), resourceName(right))
-    })
+    const sortedResources = [...resources].sort((left, right) => compareText(resourceName(left), resourceName(right)))
     const resourceRows = sortedResources.flatMap((resource) => {
       const assigned = leafTasks.filter((task) => resourceIds(task).includes(resource.id))
-      const parentMatches = includesText(resourceName(resource), normalizedFilter) || includesText(resource.role, normalizedFilter)
+      const parentMatches = includesText(resourceName(resource), normalizedFilter)
       const visibleTasks = parentMatches ? assigned : assigned.filter((task) => includesText(taskName(task), normalizedFilter))
       if (!parentMatches && visibleTasks.length === 0) return []
       const children = visibleTasks.map((task) => {
@@ -236,19 +230,10 @@ export function buildUsageModel({
         const work = knownIds.length > 0 ? taskWork(task, durationUnit, hoursPerDay) / knownIds.length : 0
         return rowWithChildren(`resource:${resource.id}:task:${String(task.id)}`, taskName(task), task.type || 'Task', 'assignment', work, assignmentPeriodWork(task, work, periods, calendar, timescale, dailyWorkByResource.get(resource.id)), [])
       })
-      return [rollupRow(`resource:${resource.id}`, resourceName(resource), resource.role, children, periods)]
+      return [rollupRow(`resource:${resource.id}`, resourceName(resource), undefined, children, periods)]
     })
 
-    let rows = resourceRows
-    if (groupBy === 'role') {
-      const groups = new Map<string, UsageGridRow[]>()
-      for (const row of resourceRows) {
-        const role = row.secondaryLabel || 'Unassigned role'
-        groups.set(role, [...(groups.get(role) ?? []), row])
-      }
-      rows = Array.from(groups.entries()).sort(([left], [right]) => compareText(left, right)).map(([role, children]) => rollupRow(`role:${role}`, role, 'Role', children, periods))
-    }
-    return { mode, timescale, periods, rows, totalWork: rows.reduce((sum, row) => sum + row.totalWork, 0), dailyWork: Object.fromEntries(resources.map((resource) => [`resource:${resource.id}`, dailyWorkByResource.get(resource.id) ?? {}])) }
+    return { mode, timescale, periods, rows: resourceRows, totalWork: resourceRows.reduce((sum, row) => sum + row.totalWork, 0), dailyWork: Object.fromEntries(resources.map((resource) => [`resource:${resource.id}`, dailyWorkByResource.get(resource.id) ?? {}])) }
   }
 
   const phaseNames = new Map(tasks.filter((task) => task.type === 'summary' && task.id !== undefined && task.id !== null).map((task) => [String(task.id), taskName(task)]))
@@ -256,11 +241,11 @@ export function buildUsageModel({
     const assigned = resourceIds(task).map((id) => resourceById.get(id)).filter((resource): resource is GanttResource => resource !== undefined)
     const parentMatches = includesText(taskName(task), taskFilter) || includesText(task.type, taskFilter)
     const unassignedMatches = includesText('Unassigned', taskFilter)
-    const visibleResources = parentMatches ? assigned : assigned.filter((resource) => includesText(resourceName(resource), taskFilter) || includesText(resource.role, taskFilter))
+    const visibleResources = parentMatches ? assigned : assigned.filter((resource) => includesText(resourceName(resource), taskFilter))
     if (!parentMatches && visibleResources.length === 0 && !(assigned.length === 0 && unassignedMatches)) return []
     const totalWork = taskWork(task, durationUnit, hoursPerDay)
     const workPerResource = assigned.length > 0 ? totalWork / assigned.length : 0
-    const children = visibleResources.map((resource) => rowWithChildren(`task:${String(task.id)}:resource:${resource.id}`, resourceName(resource), resource.role || 'Resource', 'assignment', workPerResource, assignmentPeriodWork(task, workPerResource, periods, calendar, timescale), []))
+    const children = visibleResources.map((resource) => rowWithChildren(`task:${String(task.id)}:resource:${resource.id}`, resourceName(resource), 'Resource', 'assignment', workPerResource, assignmentPeriodWork(task, workPerResource, periods, calendar, timescale), []))
     if (assigned.length === 0 && (parentMatches || unassignedMatches)) children.push(rowWithChildren(`task:${String(task.id)}:unassigned`, 'Unassigned', 'No resource assigned', 'assignment', totalWork, assignmentPeriodWork(task, totalWork, periods, calendar, timescale), []))
     const visibleWork = assigned.length === 0 ? totalWork : workPerResource * visibleResources.length
     const secondaryLabel = groupBy === 'phase' ? phaseLabel(task, phaseNames) : task.type || 'Task'

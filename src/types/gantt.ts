@@ -9,6 +9,5 @@ export type TaskWithResources = ITask & {
 export type GanttResource = {
   id: number
   label: string
-  role?: string
   avatar?: string
 }
