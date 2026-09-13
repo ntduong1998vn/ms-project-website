@@ -47,5 +47,5 @@ jobs:
           EOF
           cat /tmp/coverage.md >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/coverage.md --edit-last --create-if-missing
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/coverage.md --edit-last --create-if-none
           fi
