@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ILink } from '@svar-ui/react-gantt'
 import { Plus, TriangleAlert } from 'lucide-react'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
@@ -29,18 +30,137 @@ export function PredecessorCell({ row, links }: { row: TaskWithResources; links:
   )
 }
 
-export function ResourceNamesCell({ row, resources }: { row: TaskWithResources; resources: GanttResource[] }) {
-  if (!row.resources || !Array.isArray(row.resources) || row.resources.length === 0) {
-    return <span style={{ color: '#9ca3af' }}>-</span>
+export function ResourceNamesCell({
+  row,
+  resources,
+  onResourcesChange,
+}: {
+  row: TaskWithResources
+  resources: GanttResource[]
+  onResourcesChange: (taskId: string | number, resourceIds: number[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handle = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const close = () => setOpen(false)
+    document.addEventListener('mousedown', handle)
+    window.addEventListener('resize', close)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      document.removeEventListener('mousedown', handle)
+      window.removeEventListener('resize', close)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [open])
+
+  const assigned = Array.isArray(row.resources) ? row.resources : []
+  const assignedSet = new Set<number | string>(assigned)
+
+  const display = assigned.length
+    ? assigned
+        .map((id: number) => resources.find((r) => r.id === id)?.label)
+        .filter(Boolean)
+        .join(', ') || '-'
+    : '-'
+
+  const toggle = (id: number) => {
+    const next = assigned.includes(id) ? assigned.filter((r) => r !== id) : [...assigned, id]
+    onResourcesChange(row.id, next)
   }
-  const names = row.resources
-    .map((id: number) => resources.find((r) => r.id === id)?.label)
-    .filter(Boolean)
-    .join(', ')
+
+  const handleOpen = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect()
+      setPos({ top: rect.bottom, left: rect.left })
+    }
+    setOpen((prev) => !prev)
+  }
+
   return (
-    <span style={{ fontSize: '0.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-      {names || '-'}
-    </span>
+    <div ref={triggerRef} style={{ width: '100%' }}>
+      <div
+        onClick={handleOpen}
+        style={{
+          fontSize: '0.82rem',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          cursor: 'pointer',
+          color: assigned.length ? 'inherit' : '#9ca3af',
+        }}
+      >
+        {display}
+      </div>
+      {open &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              top: pos.top,
+              left: pos.left,
+              zIndex: 1000,
+              background: 'white',
+              border: '1px solid #d1d5db',
+              borderRadius: 4,
+              boxShadow: '0 2px 6px rgba(0, 0, 0, 0.15)',
+              padding: '6px 8px',
+              minWidth: 160,
+              maxHeight: 180,
+              overflow: 'auto',
+            }}
+          >
+            {resources.length === 0 ? (
+              <div style={{ color: '#9ca3af' }}>No resources</div>
+            ) : (
+              resources.map((r) => (
+                <label
+                  key={r.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '2px 0',
+                    whiteSpace: 'nowrap',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={assignedSet.has(r.id)}
+                    onChange={() => toggle(r.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  {r.label}
+                </label>
+              ))
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setOpen(false)
+              }}
+              style={{ marginTop: 6, width: '100%', padding: '2px 4px', fontSize: '0.75rem' }}
+            >
+              Close
+            </button>
+          </div>,
+          document.body,
+        )}
+    </div>
   )
 }
 

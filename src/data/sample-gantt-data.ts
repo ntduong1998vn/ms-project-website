@@ -2,10 +2,10 @@ import type { ILink } from '@svar-ui/react-gantt'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 
 export const sampleResources: GanttResource[] = [
-  { id: 1, label: 'Alex Johnson (PM)' },
-  { id: 2, label: 'Sarah Chen (UI/UX)' },
-  { id: 3, label: 'Michael Brown (Backend)' },
-  { id: 4, label: 'Emily Davis (Frontend)' },
+  { id: 1, label: 'Alex Johnson' },
+  { id: 2, label: 'Sarah Chen' },
+  { id: 3, label: 'Michael Brown' },
+  { id: 4, label: 'Emily Davis' },
 ]
 
 export const sampleTasks: TaskWithResources[] = [

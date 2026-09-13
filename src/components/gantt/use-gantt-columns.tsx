@@ -32,6 +32,7 @@ export type UseGanttColumnsOptions = {
   onDurationChange: (id: string | number, duration: number) => void
   onStartDateChange: (id: string | number, date: Date) => void
   onFinishDateChange: (id: string | number, date: Date) => void
+  onResourcesChange: (id: string | number, resourceIds: number[]) => void
   onOpenColumnChooser: () => void
 }
 
@@ -48,6 +49,7 @@ export function useGanttColumns({
   onDurationChange,
   onStartDateChange,
   onFinishDateChange,
+  onResourcesChange,
   onOpenColumnChooser,
 }: UseGanttColumnsOptions): IColumnConfig[] {
   const warningsByTask = useMemo(
@@ -214,7 +216,7 @@ export function useGanttColumns({
           )) as unknown as IColumnConfig['cell'],
         },
         {
-          id: 'resourceNames',
+          id: 'resources',
           getter: (task: ITask) =>
             ((task as TaskWithResources).resources ?? [])
               .map((id) => resources.find((r) => r.id === id)?.label)
@@ -230,7 +232,11 @@ export function useGanttColumns({
           },
           width: 150,
           cell: (({ row }: { row: TaskWithResources }) => (
-            <ResourceNamesCell row={row} resources={resources} />
+            <ResourceNamesCell
+              row={row}
+              resources={resources}
+              onResourcesChange={onResourcesChange}
+            />
           )) as unknown as IColumnConfig['cell'],
         },
         {
@@ -272,9 +278,10 @@ export function useGanttColumns({
       isWorkColumnVisible,
       links,
       onDurationChange,
-      onFinishDateChange,
       onOpenColumnChooser,
+      onResourcesChange,
       onSelectTask,
+      onFinishDateChange,
       onStartDateChange,
       resources,
       selectedTaskId,
