@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  ClipboardPaste,
   Clock,
   Diamond,
   Download,
@@ -34,6 +35,7 @@ export type GanttRibbonProps = {
   onNewProject: () => void
   onExportCsv: () => void
   onImportCsv: () => void
+  onPasteClipboard: () => void
   onOpenCalendar: () => void
   summaryTasks: number
   totalTasks: number
@@ -68,6 +70,7 @@ export function GanttRibbon({
   onNewProject,
   onExportCsv,
   onImportCsv,
+  onPasteClipboard,
   onOpenCalendar,
   summaryTasks,
   totalTasks,
@@ -129,6 +132,9 @@ export function GanttRibbon({
                   </DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={onImportCsv} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs outline-none hover:bg-muted focus:bg-muted transition-colors">
                     <Upload className="h-4 w-4 text-emerald-500" /><div><div className="font-medium">Import Schedule (CSV)</div><div className="text-[10px] text-muted-foreground">Review columns and map task fields</div></div>
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={onPasteClipboard} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs outline-none hover:bg-muted focus:bg-muted transition-colors">
+                    <ClipboardPaste className="h-4 w-4 text-violet-500" /><div><div className="font-medium">Paste from Clipboard</div><div className="text-[10px] text-muted-foreground">Ctrl+V — map columns like CSV import</div></div>
                   </DropdownMenu.Item>
                   <DropdownMenu.Separator className="my-1 h-px bg-border" />
                   <DropdownMenu.Item onSelect={onOpenCalendar} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs outline-none hover:bg-muted focus:bg-muted transition-colors">

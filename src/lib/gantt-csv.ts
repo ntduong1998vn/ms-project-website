@@ -7,18 +7,18 @@ import { serializeCsv } from '@/lib/csv'
 
 type DependencyType = ILink['type']
 
-function csvValue(row: string[], mapping: CsvTaskMapping, field: keyof CsvTaskMapping): string {
+export function csvValue(row: string[], mapping: CsvTaskMapping, field: keyof CsvTaskMapping): string {
   const column = mapping[field]
   return column === null ? '' : (row[column] ?? '').trim()
 }
 
-function parseCsvDateValue(value: string): Date | undefined {
+export function parseCsvDateValue(value: string): Date | undefined {
   if (!value) return undefined
   const date = new Date(value)
   return Number.isFinite(date.getTime()) ? date : undefined
 }
 
-function parseCsvResourceTokens(value: string): string[] {
+export function parseCsvResourceTokens(value: string): string[] {
   const trimmed = value.trim()
   if (!trimmed) return []
   if (/[;|]/.test(trimmed)) return trimmed.split(/[;|]+/).map((item) => item.trim()).filter(Boolean)
@@ -26,7 +26,7 @@ function parseCsvResourceTokens(value: string): string[] {
   return commaParts.length > 1 && commaParts.every((item) => /^\d+$/.test(item)) ? commaParts : [trimmed]
 }
 
-function parseCsvDependencyType(value: string): DependencyType {
+export function parseCsvDependencyType(value: string): DependencyType {
   const normalized = value.trim().toLowerCase()
   if (normalized === 's2s' || normalized === 'ss') return 's2s'
   if (normalized === 'e2e' || normalized === 'ff') return 'e2e'

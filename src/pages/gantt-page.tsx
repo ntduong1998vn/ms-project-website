@@ -1,6 +1,7 @@
 import { Gantt, Willow } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
 import { CsvImportDialog } from '@/components/csv-import-dialog'
+import { ClipboardImportDialog } from '@/components/clipboard-import-dialog'
 import { CalendarSettingsDialog } from '@/components/calendar-settings-dialog'
 import { AppLayout } from '@/components/layout/app-layout'
 import { ColumnChooserDialog } from '@/components/gantt/column-chooser-dialog'
@@ -20,6 +21,8 @@ export function GanttPage() {
     setIsCalendarDialogOpen,
     csvImportData,
     setCsvImportData,
+    clipboardImportData,
+    setClipboardImportData,
     isColumnChooserOpen,
     setIsColumnChooserOpen,
     isWorkColumnVisible,
@@ -69,6 +72,7 @@ export function GanttPage() {
           onNewProject={actions.handleNewProject}
           onExportCsv={actions.handleExportCsv}
           onImportCsv={() => fileInputRef.current?.click()}
+          onPasteClipboard={actions.handlePasteFromMenu}
           onOpenCalendar={() => setIsCalendarDialogOpen(true)}
           summaryTasks={summaryTasks}
           totalTasks={totalTasks}
@@ -194,6 +198,16 @@ export function GanttPage() {
           if (!open) setCsvImportData(null)
         }}
         onConfirm={actions.handleImportCsv}
+      />
+      <ClipboardImportDialog
+        key={clipboardImportData ? 'paste' : 'empty'}
+        data={clipboardImportData}
+        open={clipboardImportData !== null}
+        existingTaskIds={tasks.map((task) => task.id).filter((id): id is string | number => id !== undefined)}
+        onOpenChange={(open) => {
+          if (!open) setClipboardImportData(null)
+        }}
+        onConfirm={actions.handleClipboardConfirm}
       />
       <ColumnChooserDialog
         open={isColumnChooserOpen}

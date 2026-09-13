@@ -1,24 +1,36 @@
 import { useState } from 'react'
 import { Dialog } from 'radix-ui'
-import { FileSpreadsheet, X } from 'lucide-react'
+import { ClipboardPaste, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { CsvImportData, CsvTaskMapping } from '@/types/gantt-csv'
 import { csvTaskFields, initialCsvMapping } from '@/lib/csv-field-mapping'
 
-export function CsvImportDialog({
+export function ClipboardImportDialog({
   data,
   open,
+  existingTaskIds,
   onOpenChange,
   onConfirm,
 }: {
   data: CsvImportData | null
   open: boolean
+  existingTaskIds: Array<string | number>
   onOpenChange: (open: boolean) => void
   onConfirm: (mapping: CsvTaskMapping) => void
 }) {
   const [mapping, setMapping] = useState<CsvTaskMapping>(() => initialCsvMapping(data?.headers ?? []))
   if (!data) return null
   const previewRows = data.rows.slice(0, 3)
+
+  const existingIdSet = new Set(existingTaskIds.map((id) => String(id)))
+  const updateCount =
+    mapping.id === null
+      ? 0
+      : data.rows.filter((row) => {
+          const cell = (row[mapping.id as number] ?? '').trim()
+          return cell !== '' && existingIdSet.has(cell)
+        }).length
+  const insertCount = data.rows.length - updateCount
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -27,22 +39,22 @@ export function CsvImportDialog({
         {open && (
           <Dialog.Content
             className="fixed top-1/2 left-1/2 z-50 flex max-h-[90vh] w-full max-w-3xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-card p-6 shadow-2xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-            aria-describedby="csv-import-description"
+            aria-describedby="clipboard-import-description"
           >
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
-                  <FileSpreadsheet className="h-4 w-4" />
+                  <ClipboardPaste className="h-4 w-4" />
                 </div>
                 <div>
-                  <Dialog.Title className="text-base font-semibold text-foreground">Import CSV Schedule</Dialog.Title>
-                  <Dialog.Description id="csv-import-description" className="text-xs text-muted-foreground">
-                    Verify the detected columns before importing {data.fileName} ({data.rows.length} data rows).
+                  <Dialog.Title className="text-base font-semibold text-foreground">Paste from Clipboard</Dialog.Title>
+                  <Dialog.Description id="clipboard-import-description" className="text-xs text-muted-foreground">
+                    {data.rows.length} rows — {updateCount} will update existing tasks, {insertCount} will be added.
                   </Dialog.Description>
                 </div>
               </div>
               <Dialog.Close asChild>
-                <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close CSV import dialog">
+                <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close clipboard import dialog">
                   <X className="h-4 w-4" />
                 </button>
               </Dialog.Close>
@@ -63,7 +75,7 @@ export function CsvImportDialog({
                       }))
                     }
                     className="h-9 rounded-md border border-border bg-background px-2 text-xs font-normal text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-                    aria-label={`CSV column for ${field.label}`}
+                    aria-label={`Clipboard column for ${field.label}`}
                   >
                     <option value="">Do not import</option>
                     {data.headers.map((header, index) => (
@@ -78,7 +90,7 @@ export function CsvImportDialog({
 
             <div className="mt-4 rounded-md border border-border bg-muted/30 p-3">
               <div className="mb-2 text-xs font-semibold text-foreground">Detected headers</div>
-              <div className="flex flex-wrap gap-1.5" aria-label="Detected CSV headers">
+              <div className="flex flex-wrap gap-1.5" aria-label="Detected clipboard headers">
                 {data.headers.map((header, index) => (
                   <span key={`${index}-${header}`} className="rounded bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
                     {header || `Column ${index + 1}`}
@@ -107,7 +119,7 @@ export function CsvImportDialog({
 
             <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
               <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)} className="cursor-pointer">Cancel</Button>
-              <Button type="button" size="sm" onClick={() => onConfirm(mapping)} className="cursor-pointer">Import CSV</Button>
+              <Button type="button" size="sm" onClick={() => onConfirm(mapping)} className="cursor-pointer">Apply</Button>
             </div>
           </Dialog.Content>
         )}

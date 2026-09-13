@@ -1,12 +1,14 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { type IApi, type ILink, type IResource, type IScaleConfig, type ITask } from '@svar-ui/react-gantt'
 import { sampleLinks, sampleResources, sampleTasks } from '@/data/sample-gantt-data'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 import type { CsvImportData, CsvTaskMapping } from '@/types/gantt-csv'
 import type { RibbonTab, ViewMode, ZoomMode } from '@/components/gantt/gantt-ribbon'
+import { applyGanttPaste } from '@/lib/gantt-paste'
 import { importGanttCsv, serializeGanttCsv } from '@/lib/gantt-csv'
 import { autoScheduleTasks, calculateEndDate, calculateTaskDuration, createSvarCalendarAdapter, defaultCalendarConfig, formatToDateString, getNextWorkingDay, inclusiveFinishToExclusiveEnd, type ProjectCalendarConfig } from '@/lib/scheduler'
 import { parseCsv } from '@/lib/csv'
+import { parseClipboardTable } from '@/lib/clipboard'
 import { addTaskAtPlacement, collectTaskSubtreeIds, getNextNumericTaskId, isTaskParentAllowed, moveTaskAtPlacement, resequenceProject, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
 
 type TaskPlacementMode = 'before' | 'after' | 'child' | 'up' | 'down'
@@ -28,6 +30,7 @@ export function useGanttProject() {
   const [isAutoSchedule, setIsAutoSchedule] = useState<boolean>(true)
   const [isCalendarDialogOpen, setIsCalendarDialogOpen] = useState<boolean>(false)
   const [csvImportData, setCsvImportData] = useState<CsvImportData | null>(null)
+  const [clipboardImportData, setClipboardImportData] = useState<CsvImportData | null>(null)
   const [isColumnChooserOpen, setIsColumnChooserOpen] = useState<boolean>(false)
   const [isWorkColumnVisible, setIsWorkColumnVisible] = useState<boolean>(false)
   const [activeTab, setActiveTab] = useState<RibbonTab>('task')
@@ -88,6 +91,16 @@ export function useGanttProject() {
     apiInstance.intercept('show-editor', (ev: { id?: string | number } | undefined) => {
       handleTaskSelection(ev)
       return false
+    })
+
+    // Veto SVAR's clipboard hotkeys: its ctrl+v runs paste-task without
+    // preventDefault, so the document paste listener would also fire and
+    // double-apply. With paste vetoed, the internal copy/cut buffer is dead
+    // state, so veto those too. No preventDefault on the keydown — that would
+    // suppress the browser paste event our listener relies on.
+    apiInstance.intercept('hotkey', (ev: { key?: string }) => {
+      if (ev?.key === 'ctrl+v' || ev?.key === 'ctrl+c' || ev?.key === 'ctrl+x') return false
+      return true
     })
 
   }, [handleTaskSelection])
@@ -770,6 +783,76 @@ export function useGanttProject() {
     },
     [calendarConfig, csvImportData, durationUnit, isAutoSchedule, resourceList]
   )
+  const handleClipboardConfirm = useCallback(
+    (mapping: CsvTaskMapping) => {
+      if (!clipboardImportData) return
+      const result = applyGanttPaste(
+        clipboardImportData,
+        mapping,
+        { tasks, links, resources: resourceList },
+        calendarConfig,
+        durationUnit,
+        isAutoSchedule
+      )
+      if (result.kind === 'no-importable-rows') {
+        alert('No importable task rows were found. Map a task name column or provide non-empty rows.')
+        return
+      }
+      if (result.resources.length !== resourceList.length) setResourceList(result.resources)
+      setTasks(result.tasks)
+      setLinks(result.links)
+      setSelectedTaskId(null)
+      setClipboardImportData(null)
+    },
+    [calendarConfig, clipboardImportData, durationUnit, isAutoSchedule, links, resourceList, tasks]
+  )
+
+  const canPasteFromClipboard =
+    viewMode === 'gantt' &&
+    activeTab !== 'resources' &&
+    !csvImportData &&
+    !clipboardImportData &&
+    !isCalendarDialogOpen &&
+    !isColumnChooserOpen
+
+  const handlePasteFromMenu = useCallback(() => {
+    if (!canPasteFromClipboard) return
+    if (!navigator.clipboard) {
+      alert('Clipboard access denied. Press Ctrl+V on the grid instead.')
+      return
+    }
+    navigator.clipboard
+      .readText()
+      .then((text) => {
+        const parsed = parseClipboardTable(text)
+        if (parsed) setClipboardImportData(parsed)
+        else alert('Clipboard is empty or does not contain tabular data.')
+      })
+      .catch(() => alert('Clipboard access denied. Press Ctrl+V on the grid instead.'))
+  }, [canPasteFromClipboard])
+
+  useEffect(() => {
+    const handler = (event: ClipboardEvent) => {
+      if (!canPasteFromClipboard) return
+      const target = event.target as HTMLElement | null
+      if (
+        target?.closest?.(
+          'input, textarea, select, [contenteditable], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]'
+        )
+      ) {
+        return
+      }
+      const text = event.clipboardData?.getData('text/plain')
+      const parsed = text ? parseClipboardTable(text) : null
+      if (parsed) {
+        event.preventDefault()
+        setClipboardImportData(parsed)
+      }
+    }
+    document.addEventListener('paste', handler)
+    return () => document.removeEventListener('paste', handler)
+  }, [canPasteFromClipboard])
+
 
   // File Menu: New Project
   const handleNewProject = useCallback(() => {
@@ -887,9 +970,9 @@ export function useGanttProject() {
 
 
   return {
-    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
+    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
     derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent },
-    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleExportCsv, handleImportFile, handleImportCsv, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
+    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
     gantt: { api, ganttResources, scalePresets },
     fileInputRef,
   }
