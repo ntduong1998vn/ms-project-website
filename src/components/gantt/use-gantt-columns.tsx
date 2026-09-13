@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { type IColumnConfig, type ILink, type ITask } from '@svar-ui/react-gantt'
+import { type IColumnConfig, type ILink, type ITask, type IApi } from '@svar-ui/react-gantt'
 import { TriangleAlert } from 'lucide-react'
 import {
   AddColumnHeaderCell,
@@ -12,8 +12,10 @@ import {
   StartDateCell,
   WorkCell,
 } from '@/components/gantt/gantt-cells'
+import { ColumnFilterHeader } from '@/components/gantt/column-filter-header'
 import { getResourceEffortWarnings } from '@/lib/resource-effort'
 import { sameTaskId } from '@/lib/task-helpers'
+import { collectDistinctOptions, taskTextFilter, workHours } from '@/lib/gantt-filters'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 
@@ -25,6 +27,7 @@ export type UseGanttColumnsOptions = {
   durationUnit: 'day' | 'hour'
   isWorkColumnVisible: boolean
   selectedTaskId: string | number | null
+  ganttApi: IApi | null
   onSelectTask: (id: string | number) => void
   onDurationChange: (id: string | number, duration: number) => void
   onStartDateChange: (id: string | number, date: Date) => void
@@ -40,6 +43,7 @@ export function useGanttColumns({
   durationUnit,
   isWorkColumnVisible,
   selectedTaskId,
+  ganttApi,
   onSelectTask,
   onDurationChange,
   onStartDateChange,
@@ -52,156 +56,230 @@ export function useGanttColumns({
   )
 
   return useMemo(
-    () => [
-      {
-        id: 'effortWarning',
-        header: {
-          text: '',
-          cell: () => (
-            <span title="Resource effort overlap warnings" aria-label="Resource effort overlap warnings">
-              <TriangleAlert className="mx-auto h-3.5 w-3.5 text-destructive" aria-hidden="true" />
+    () => {
+      const textOptions = collectDistinctOptions(tasks, (t) => t.text)
+      const resourceOptions = resources.map((r) => r.label).sort()
+      const hasResourceBlank = tasks.some(
+        (t) => !((t as TaskWithResources).resources?.length ?? 0)
+      )
+      const predecessorGetter = (task: ITask) =>
+        links
+          .filter((link) => String(link.target) === String(task.id))
+          .map((link) => String(link.source))
+      const predecessorOptions = collectDistinctOptions(tasks, predecessorGetter)
+
+      const headerCell = (
+        title: string,
+        cfg: { sortable?: boolean; filterable?: boolean; options?: string[]; hasBlank?: boolean }
+      ) => ({
+        text: title,
+        cell: (props: {
+          api: {
+            getState: () => {
+              filterValues?: Record<string, unknown>
+              sortMarks?: Record<string, { order?: 'asc' | 'desc' }>
+            }
+            exec: (action: string, params?: unknown) => Promise<unknown>
+          }
+          column: { id?: string | number }
+        }) =>
+          ColumnFilterHeader({
+            ...props,
+            title,
+            sortable: cfg.sortable ?? false,
+            filterable: cfg.filterable ?? false,
+            options: cfg.options ?? [],
+            hasBlank: cfg.hasBlank ?? false,
+            ganttApi,
+          }),
+      })
+
+      const columns: IColumnConfig[] = [
+        {
+          id: 'effortWarning',
+          header: {
+            text: '',
+            cell: () => (
+              <span title="Resource effort overlap warnings" aria-label="Resource effort overlap warnings">
+                <TriangleAlert className="mx-auto h-3.5 w-3.5 text-destructive" aria-hidden="true" />
+              </span>
+            ),
+          },
+          width: 42,
+          align: 'center',
+          sort: false,
+          cell: (({ row }: { row: TaskWithResources }) => (
+            <EffortWarningCell row={row} warningsByTask={warningsByTask} />
+          )) as unknown as IColumnConfig['cell'],
+        },
+        {
+          id: 'id',
+          header: headerCell('ID', { sortable: true }),
+          width: 50,
+          align: 'center',
+          sort: true,
+          cell: (({ row }: { row: TaskWithResources }) => (
+            <span
+              onClick={() => onSelectTask(row.id)}
+              style={{
+                fontWeight: 600,
+                fontSize: '0.82rem',
+                color: selectedTaskId != null && sameTaskId(selectedTaskId, row.id) ? '#107c41' : '#6b7280',
+                display: 'inline-block',
+                width: '100%',
+                textAlign: 'center',
+                fontVariantNumeric: 'tabular-nums',
+                cursor: 'pointer',
+              }}
+            >
+              {row.id}
             </span>
-          ),
+          )) as unknown as IColumnConfig['cell'],
         },
-        width: 42,
-        align: 'center',
-        cell: (({ row }: { row: TaskWithResources }) => (
-          <EffortWarningCell row={row} warningsByTask={warningsByTask} />
-        )) as unknown as IColumnConfig['cell'],
-      },
-      {
-        id: 'id',
-        header: 'ID',
-        width: 50,
-        align: 'center',
-        sort: true,
-        cell: (({ row }: { row: TaskWithResources }) => (
-          <span
-            onClick={() => onSelectTask(row.id)}
-            style={{
-              fontWeight: 600,
-              fontSize: '0.82rem',
-              color: selectedTaskId != null && sameTaskId(selectedTaskId, row.id) ? '#107c41' : '#6b7280',
-              display: 'inline-block',
-              width: '100%',
-              textAlign: 'center',
-              fontVariantNumeric: 'tabular-nums',
-              cursor: 'pointer',
-            }}
-          >
-            {row.id}
-          </span>
-        )) as unknown as IColumnConfig['cell'],
-      },
-      {
-        id: 'text',
-        header: 'Task Name',
-        width: 220,
-        flexgrow: 2,
-        sort: true,
-        editor: 'text',
-      },
-      {
-        id: 'duration',
-        header: `Duration (${durationUnit === 'day' ? 'days' : 'hrs'})`,
-        width: 100,
-        align: 'center',
-        sort: true,
-        cell: (({ row }: { row: TaskWithResources }) => (
-          <DurationCell
-            row={row}
-            onDurationChange={onDurationChange}
-            onSelect={onSelectTask}
-          />
-        )) as unknown as IColumnConfig['cell'],
-      },
-      ...(isWorkColumnVisible
-        ? [
-            {
-              id: 'work',
-              header: 'Work',
-              width: 90,
-              align: 'center' as const,
-              cell: (({ row }: { row: TaskWithResources }) => (
-                <WorkCell
-                  row={row}
-                  workingHoursPerDay={calendarConfig.workingHoursPerDay}
-                  durationUnit={durationUnit}
-                />
-              )) as unknown as IColumnConfig['cell'],
-            },
-          ]
-        : []),
-      {
-        id: 'start',
-        header: 'Start',
-        width: 125,
-        align: 'center',
-        sort: true,
-        cell: (({ row }: { row: TaskWithResources }) => (
-          <StartDateCell
-            row={row}
-            onDateChange={onStartDateChange}
-            onSelect={onSelectTask}
-          />
-        )) as unknown as IColumnConfig['cell'],
-      },
-      {
-        id: 'end',
-        header: 'Finish',
-        width: 125,
-        align: 'center',
-        sort: true,
-        cell: (({ row }: { row: TaskWithResources }) => (
-          <FinishDateCell
-            row={row}
-            onDateChange={onFinishDateChange}
-            onSelect={onSelectTask}
-          />
-        )) as unknown as IColumnConfig['cell'],
-      },
-      {
-        id: 'predecessors',
-        header: 'Predecessors',
-        width: 100,
-        align: 'center',
-        editor: 'text',
-        cell: (({ row }: { row: TaskWithResources }) => (
-          <PredecessorCell row={row} links={links} />
-        )) as unknown as IColumnConfig['cell'],
-      },
-      {
-        id: 'resourceNames',
-        header: 'Resource Names',
-        width: 150,
-        cell: (({ row }: { row: TaskWithResources }) => (
-          <ResourceNamesCell row={row} resources={resources} />
-        )) as unknown as IColumnConfig['cell'],
-      },
-      {
-        id: 'add-task',
-        header: {
-          text: '',
-          cell: () => <AddColumnHeaderCell onOpen={onOpenColumnChooser} />,
+        {
+          id: 'text',
+          header: {
+            ...headerCell('Task Name', {
+              sortable: true,
+              filterable: true,
+              options: textOptions.options,
+              hasBlank: textOptions.hasBlank,
+            }),
+            filter: { type: 'text' as const, config: { handler: taskTextFilter } },
+          },
+          width: 220,
+          flexgrow: 2,
+          sort: true,
+          editor: 'text',
         },
-        cell: AddTaskCell as unknown as IColumnConfig['cell'],
-        width: 38,
-        align: 'center',
-      },
-    ],
+        {
+          id: 'duration',
+          header: headerCell(`Duration (${durationUnit === 'day' ? 'days' : 'hrs'})`, { sortable: true }),
+          width: 100,
+          align: 'center',
+          sort: true,
+          cell: (({ row }: { row: TaskWithResources }) => (
+            <DurationCell
+              row={row}
+              onDurationChange={onDurationChange}
+              onSelect={onSelectTask}
+            />
+          )) as unknown as IColumnConfig['cell'],
+        },
+        {
+          id: 'start',
+          header: headerCell('Start', { sortable: true }),
+          width: 125,
+          align: 'center',
+          sort: true,
+          cell: (({ row }: { row: TaskWithResources }) => (
+            <StartDateCell
+              row={row}
+              onDateChange={onStartDateChange}
+              onSelect={onSelectTask}
+            />
+          )) as unknown as IColumnConfig['cell'],
+        },
+        {
+          id: 'end',
+          header: headerCell('Finish', { sortable: true }),
+          width: 125,
+          align: 'center',
+          sort: true,
+          cell: (({ row }: { row: TaskWithResources }) => (
+            <FinishDateCell
+              row={row}
+              onDateChange={onFinishDateChange}
+              onSelect={onSelectTask}
+            />
+          )) as unknown as IColumnConfig['cell'],
+        },
+        {
+          id: 'predecessors',
+          getter: predecessorGetter,
+          sort: false,
+          header: {
+            ...headerCell('Predecessors', {
+              filterable: true,
+              options: predecessorOptions.options,
+              hasBlank: predecessorOptions.hasBlank,
+            }),
+            filter: { type: 'text' as const, config: { handler: taskTextFilter } },
+          },
+          width: 100,
+          align: 'center',
+          editor: 'text',
+          cell: (({ row }: { row: TaskWithResources }) => (
+            <PredecessorCell row={row} links={links} />
+          )) as unknown as IColumnConfig['cell'],
+        },
+        {
+          id: 'resourceNames',
+          getter: (task: ITask) =>
+            ((task as TaskWithResources).resources ?? [])
+              .map((id) => resources.find((r) => r.id === id)?.label)
+              .filter((v): v is string => Boolean(v)),
+          sort: false,
+          header: {
+            ...headerCell('Resource Names', {
+              filterable: true,
+              options: resourceOptions,
+              hasBlank: hasResourceBlank,
+            }),
+            filter: { type: 'text' as const, config: { handler: taskTextFilter } },
+          },
+          width: 150,
+          cell: (({ row }: { row: TaskWithResources }) => (
+            <ResourceNamesCell row={row} resources={resources} />
+          )) as unknown as IColumnConfig['cell'],
+        },
+        {
+          id: 'add-task',
+          header: {
+            text: '',
+            cell: () => <AddColumnHeaderCell onOpen={onOpenColumnChooser} />,
+          },
+          cell: AddTaskCell as unknown as IColumnConfig['cell'],
+          width: 38,
+          align: 'center',
+        },
+      ]
+
+      if (isWorkColumnVisible) {
+        columns.splice(4, 0, {
+          id: 'work',
+          header: headerCell('Work', { sortable: true }),
+          width: 90,
+          align: 'center',
+          sort: true,
+          getter: (task: ITask) => workHours(task, durationUnit, calendarConfig.workingHoursPerDay),
+          cell: (({ row }: { row: TaskWithResources }) => (
+            <WorkCell
+              row={row}
+              workingHoursPerDay={calendarConfig.workingHoursPerDay}
+              durationUnit={durationUnit}
+            />
+          )) as unknown as IColumnConfig['cell'],
+        })
+      }
+
+      return columns
+    },
     [
       calendarConfig,
       durationUnit,
+      ganttApi,
+      isWorkColumnVisible,
+      links,
       onDurationChange,
       onFinishDateChange,
       onOpenColumnChooser,
-      onStartDateChange,
-      isWorkColumnVisible,
-      links,
-      resources,
-      warningsByTask,
-      selectedTaskId,
       onSelectTask,
+      onStartDateChange,
+      resources,
+      selectedTaskId,
+      tasks,
+      warningsByTask,
     ]
   )
 }

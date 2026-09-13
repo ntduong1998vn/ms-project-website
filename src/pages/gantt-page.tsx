@@ -52,6 +52,7 @@ export function GanttPage() {
     durationUnit,
     isWorkColumnVisible,
     selectedTaskId,
+    ganttApi: gantt.api,
     onSelectTask: setSelectedTaskId,
     onDurationChange: actions.handleDurationChange,
     onStartDateChange: actions.handleStartDateChange,
