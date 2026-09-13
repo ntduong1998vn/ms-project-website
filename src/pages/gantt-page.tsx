@@ -3,6 +3,7 @@ import '@svar-ui/react-gantt/all.css'
 import { CsvImportDialog } from '@/components/csv-import-dialog'
 import { ClipboardImportDialog } from '@/components/clipboard-import-dialog'
 import { CalendarSettingsDialog } from '@/components/calendar-settings-dialog'
+import { IntegrationSettingsDialog } from '@/components/integration-settings-dialog'
 import { AppLayout } from '@/components/layout/app-layout'
 import { ColumnChooserDialog } from '@/components/gantt/column-chooser-dialog'
 import { GanttRibbon } from '@/components/gantt/gantt-ribbon'
@@ -38,6 +39,11 @@ export function GanttPage() {
     tasks,
     links,
     resourceList,
+    integrationSettings,
+    isIntegrationDialogOpen,
+    setIsIntegrationDialogOpen,
+    integrationBusy,
+    lastSyncAt,
   } = state
   const {
     totalTasks,
@@ -99,15 +105,35 @@ export function GanttPage() {
           onToggleGanttVisibility={actions.handleToggleGanttVisibility}
           viewMode={viewMode}
           onViewModeChange={actions.handleViewModeChange}
+          onOpenIntegrationSettings={() => setIsIntegrationDialogOpen(true)}
+          onRedmineGet={actions.handleRedmineGet}
+          onRedminePushNew={actions.handleRedminePushNew}
+          onRedmineSync={actions.handleRedmineSync}
+          onRedmineFetchMeta={actions.handleRedmineFetchMetadata}
+          integrationBusy={integrationBusy}
+          lastSyncAt={lastSyncAt}
+          integrationConfigured={
+            integrationSettings.baseUrl.trim() !== '' && integrationSettings.apiKey.trim() !== ''
+          }
         />
       }
       overlays={
-        <CalendarSettingsDialog
-          open={isCalendarDialogOpen}
-          onOpenChange={setIsCalendarDialogOpen}
-          calendarConfig={calendarConfig}
-          onSave={actions.handleSaveCalendar}
-        />
+        <>
+          <CalendarSettingsDialog
+            open={isCalendarDialogOpen}
+            onOpenChange={setIsCalendarDialogOpen}
+            calendarConfig={calendarConfig}
+            onSave={actions.handleSaveCalendar}
+          />
+          <IntegrationSettingsDialog
+            open={isIntegrationDialogOpen}
+            onOpenChange={setIsIntegrationDialogOpen}
+            settings={integrationSettings}
+            onSave={actions.handleSaveIntegrationSettings}
+            onTestConnection={actions.handleTestIntegrationConnection}
+            onFetchMetadata={actions.handleFetchIntegrationMetadata}
+          />
+        </>
       }
     >
       <input

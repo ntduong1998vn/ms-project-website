@@ -12,10 +12,15 @@ import {
   Download,
   FilePlus,
   FolderKanban,
+  FolderSync,
   Indent,
   Layers,
+  Loader2,
   Outdent,
+  Plug,
   PlusCircle,
+  RefreshCw,
+  Settings,
   Trash2,
   Upload,
   UserPlus,
@@ -26,7 +31,7 @@ import {
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 
 export type ZoomMode = 'hour' | 'day' | 'week' | 'month'
-export type RibbonTab = 'task' | 'project' | 'view' | 'resources'
+export type RibbonTab = 'task' | 'project' | 'view' | 'resources' | 'redmine'
 export type ViewMode = 'gantt' | 'resource-usage' | 'task-usage'
 
 export type GanttRibbonProps = {
@@ -62,6 +67,14 @@ export type GanttRibbonProps = {
   onToggleGanttVisibility: () => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
+  onOpenIntegrationSettings: () => void
+  onRedmineGet: () => void
+  onRedminePushNew: () => void
+  onRedmineSync: () => void
+  onRedmineFetchMeta: () => void
+  integrationBusy: 'get' | 'push' | 'sync' | 'meta' | null
+  lastSyncAt: string | null
+  integrationConfigured: boolean
 }
 
 export function GanttRibbon({
@@ -97,6 +110,14 @@ export function GanttRibbon({
   onToggleGanttVisibility,
   viewMode,
   onViewModeChange,
+  onOpenIntegrationSettings,
+  onRedmineGet,
+  onRedminePushNew,
+  onRedmineSync,
+  onRedmineFetchMeta,
+  integrationBusy,
+  lastSyncAt,
+  integrationConfigured,
 }: GanttRibbonProps) {
   return (
     <header className="flex flex-col shrink-0 border-b border-border bg-card shadow-xs select-none">
@@ -150,6 +171,9 @@ export function GanttRibbon({
             ))}
             <button type="button" onClick={() => onTabChange('resources')} className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${activeTab === 'resources' ? 'bg-muted text-foreground font-semibold border-b-2 border-primary' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
               <Users className="h-3.5 w-3.5" />Resources
+            </button>
+            <button type="button" onClick={() => onTabChange('redmine')} className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${activeTab === 'redmine' ? 'bg-muted text-foreground font-semibold border-b-2 border-primary' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
+              <Plug className="h-3.5 w-3.5" />Redmine
             </button>
           </nav>
         </div>
@@ -245,6 +269,22 @@ export function GanttRibbon({
           </div>
         )}
         {activeTab === 'resources' && <div className="flex items-center gap-3 overflow-x-auto py-1"><button type="button" onClick={onAddResource} className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"><UserPlus className="h-3.5 w-3.5" />Add resource</button><span className="text-xs text-muted-foreground">{resourceCount} {resourceCount === 1 ? 'resource' : 'resources'} available</span></div>}
+        {activeTab === 'redmine' && (
+          <>
+            <div className="flex items-center gap-2 overflow-x-auto py-1">
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={onOpenIntegrationSettings} className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 transition-colors cursor-pointer shadow-2xs" title="Configure Redmine connection and field mapping"><Settings className="h-3.5 w-3.5" /><span>Redmine Settings</span></button>
+              </div><div className="h-5 w-px bg-border" />
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={onRedmineGet} disabled={integrationBusy !== null || !integrationConfigured} className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Pull Redmine issues into the schedule' : 'Configure the Redmine connection first'}>{integrationBusy === 'get' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5 text-blue-500" />}<span>Get Tasks</span></button>
+                <button type="button" onClick={onRedminePushNew} disabled={integrationBusy !== null || !integrationConfigured} className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Create Redmine issues for unlinked tasks' : 'Configure the Redmine connection first'}>{integrationBusy === 'push' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 text-emerald-500" />}<span>Push New</span></button>
+                <button type="button" onClick={onRedmineSync} disabled={integrationBusy !== null || !integrationConfigured} className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Push field updates of linked tasks to Redmine' : 'Configure the Redmine connection first'}>{integrationBusy === 'sync' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 text-violet-500" />}<span>Sync to Redmine</span></button>
+                <button type="button" onClick={onRedmineFetchMeta} disabled={integrationBusy !== null || !integrationConfigured} className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Fetch trackers, statuses, members and custom fields' : 'Configure the Redmine connection first'}>{integrationBusy === 'meta' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderSync className="h-3.5 w-3.5 text-amber-500" />}<span>Get Project Info</span></button>
+              </div>
+            </div>
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 pl-3"><span className="text-[10px] uppercase font-semibold text-muted-foreground/80">Last sync:</span><span className="font-medium text-foreground">{lastSyncAt ?? 'never'}</span></div>
+          </>
+        )}
       </div>
     </header>
   )
