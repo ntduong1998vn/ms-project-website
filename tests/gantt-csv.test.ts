@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ILink, ITask } from '@svar-ui/react-gantt'
 import { parseCsv } from '@/lib/csv'
-import { importGanttCsv, serializeGanttCsv } from '@/lib/gantt-csv'
+import { csvValue, importGanttCsv, parseCsvDateValue, parseCsvDependencyType, parseCsvResourceTokens, serializeGanttCsv } from '@/lib/gantt-csv'
 import { defaultCalendarConfig } from '@/lib/scheduler'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 import type { CsvTaskMapping } from '@/types/gantt-csv'
@@ -58,6 +58,54 @@ describe('serializeGanttCsv', () => {
     expect(second?.[10]).toBe('e2s')
   })
 })
+
+describe('parseCsvResourceTokens', () => {
+  it('splits on semicolons, pipes, or commas', () => {
+    expect(parseCsvResourceTokens('')).toEqual([])
+    expect(parseCsvResourceTokens('  ')).toEqual([])
+    expect(parseCsvResourceTokens('a,b,c')).toEqual(['a,b,c'])
+    expect(parseCsvResourceTokens('a;b;c')).toEqual(['a', 'b', 'c'])
+    expect(parseCsvResourceTokens('1,2,3')).toEqual(['1', '2', '3'])
+    expect(parseCsvResourceTokens('Alex;Sam')).toEqual(['Alex', 'Sam'])
+    expect(parseCsvResourceTokens('a|b')).toEqual(['a', 'b'])
+    expect(parseCsvResourceTokens('single')).toEqual(['single'])
+  })
+})
+
+describe('parseCsvDependencyType', () => {
+  it('normalizes dependency type aliases', () => {
+    expect(parseCsvDependencyType('ss')).toBe('s2s')
+    expect(parseCsvDependencyType('S2S')).toBe('s2s')
+    expect(parseCsvDependencyType('ff')).toBe('e2e')
+    expect(parseCsvDependencyType('FF')).toBe('e2e')
+    expect(parseCsvDependencyType('sf')).toBe('s2e')
+    expect(parseCsvDependencyType('SF')).toBe('s2e')
+    expect(parseCsvDependencyType('')).toBe('e2s')
+    expect(parseCsvDependencyType('anything')).toBe('e2s')
+  })
+})
+describe('parseCsvDateValue', () => {
+  it('returns a date for valid inputs and undefined for empty or invalid inputs', () => {
+    expect(parseCsvDateValue('')).toBeUndefined()
+    expect(parseCsvDateValue('not-a-date')).toBeUndefined()
+    const valid = parseCsvDateValue('2026-09-07')
+    expect(valid).toBeInstanceOf(Date)
+    expect(valid?.toISOString().startsWith('2026-09-07')).toBe(true)
+  })
+})
+describe('csvValue', () => {
+  it('returns an empty string for unmapped or missing cells and trimmed values for mapped cells', () => {
+    const row = [' 1 ', 'name', '']
+    const testMapping: CsvTaskMapping = { ...mapping }
+    expect(csvValue(row, testMapping, 'id')).toBe('1')
+    testMapping.id = null
+    expect(csvValue(row, testMapping, 'id')).toBe('')
+    testMapping.text = 5
+    expect(csvValue(row, testMapping, 'text')).toBe('')
+  })
+})
+
+
 
 describe('importGanttCsv', () => {
   it('creates mapped tasks, links, and named resources with dates and durations', () => {
@@ -126,5 +174,18 @@ describe('importGanttCsv', () => {
     expect(result.tasks[1].end).toEqual(result.tasks[1].start)
     expect(result.tasks[2].duration).toBe(1)
     expect(result.links).toEqual([{ id: 1, source: 30, target: 31, type: 'e2e' }])
+  })
+
+  it('falls back to default predecessor type and tolerates invalid progress and blank resource labels', () => {
+    const result = importGanttCsv(csvData([
+      ['1', 'One', '2026-09-07', '2026-09-08', '1', 'task', '0', '', '1;Unknown', '', ''],
+      ['2', 'Two', '2026-09-09', '2026-09-10', '1', 'task', 'n/a', '', '', '1', ''],
+    ]), mapping, defaultCalendarConfig, 'day', false, [{ id: 1, label: '' }])
+
+    expect(result.kind).toBe('success')
+    if (result.kind !== 'success') return
+    expect(result.tasks[1].progress).toBe(0)
+    expect(result.links).toEqual([{ id: 1, source: 1, target: 2, type: 'e2s' }])
+    expect(result.resources.map((r) => r.id)).toContain(2)
   })
 })

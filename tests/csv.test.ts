@@ -43,6 +43,10 @@ describe('parseCsv', () => {
   it('permissively returns an unmatched quoted field at end of input', () => {
     expect(parseCsv('name,"unfinished')).toEqual([['name', 'unfinished']])
   })
+  it('ignores blank rows and a final row of only empty cells', () => {
+    expect(parseCsv('a\n\n,')).toEqual([['a']])
+    expect(parseCsv(',\n')).toEqual([])
+  })
 })
 
 describe('csvEscape', () => {

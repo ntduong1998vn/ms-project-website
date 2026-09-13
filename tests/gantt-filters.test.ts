@@ -49,6 +49,10 @@ describe('taskTextFilter', () => {
   it('in with no selection shows nothing', () => {
     expect(taskTextFilter('Alpha', { mode: 'in', values: [] })).toBe(false)
   })
+  it('uses default values for omitted filter fields', () => {
+    expect(taskTextFilter('Alpha', { mode: 'in' })).toBe(false)
+    expect(taskTextFilter('Alpha', { mode: 'contains' })).toBe(true)
+  })
 
   it('handles multi-value (array) cells', () => {
     const values = ['Frontend', 'Backend']
