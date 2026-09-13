@@ -35,8 +35,8 @@ export function getResourceEffortWarnings(
   >()
 
   for (const task of tasks) {
-    // Summary rows describe their children and do not represent additional resource effort.
-    if (task.type === 'summary') continue
+    // Summary and milestone rows do not represent additional resource effort.
+    if (task.type === 'summary' || task.type === 'milestone') continue
 
     const duration = Number(task.duration)
     if (!Number.isFinite(duration) || duration <= 0 || task.id === undefined || task.id === null) continue
@@ -68,14 +68,15 @@ export function getResourceEffortWarnings(
           .filter((resourceId) => Number.isFinite(resourceId))
       )
     )
-    if (assignedResourceIds.length === 0) continue
+    const knownResourceIds = assignedResourceIds.filter((resourceId) => resourceById.has(resourceId))
+    if (knownResourceIds.length === 0) continue
 
     const taskEntry = {
       id: task.id,
       text: String(task.text || `Task ${task.id}`),
-      hours: dailyHours,
+      hours: dailyHours / knownResourceIds.length,
     }
-    for (const resourceId of assignedResourceIds) {
+    for (const resourceId of knownResourceIds) {
       const resource = resourceById.get(resourceId)
       if (!resource) continue
       for (const workingDate of workingDates) {
@@ -89,7 +90,7 @@ export function getResourceEffortWarnings(
             totalHours: 0,
             tasks: new Map(),
           }
-        bucket.totalHours += dailyHours
+        bucket.totalHours += dailyHours / knownResourceIds.length
         bucket.tasks.set(String(task.id), taskEntry)
         dailyBuckets.set(bucketKey, bucket)
       }

@@ -26,6 +26,7 @@ import type { ProjectCalendarConfig } from '@/lib/scheduler'
 
 export type ZoomMode = 'hour' | 'day' | 'week' | 'month'
 export type RibbonTab = 'task' | 'project' | 'view' | 'resources'
+export type ViewMode = 'gantt' | 'resource-usage' | 'task-usage'
 
 export type GanttRibbonProps = {
   activeTab: RibbonTab
@@ -57,6 +58,8 @@ export type GanttRibbonProps = {
   onAddResource: () => void
   isGanttVisible: boolean
   onToggleGanttVisibility: () => void
+  viewMode: ViewMode
+  onViewModeChange: (mode: ViewMode) => void
 }
 
 export function GanttRibbon({
@@ -89,6 +92,8 @@ export function GanttRibbon({
   onAddResource,
   isGanttVisible,
   onToggleGanttVisibility,
+  viewMode,
+  onViewModeChange,
 }: GanttRibbonProps) {
   return (
     <header className="flex flex-col shrink-0 border-b border-border bg-card shadow-xs select-none">
@@ -172,6 +177,27 @@ export function GanttRibbon({
         {activeTab === 'view' && (
           <div className="flex items-center gap-3 overflow-x-auto py-1">
             <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">View:</span>
+              <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
+                {([
+                  ['gantt', 'Gantt'],
+                  ['resource-usage', 'Resource Usage'],
+                  ['task-usage', 'Task Usage'],
+                ] as Array<[ViewMode, string]>).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => onViewModeChange(mode)}
+                    aria-pressed={viewMode === mode}
+                    className={`rounded px-2.5 py-0.5 text-xs font-medium transition-colors cursor-pointer ${viewMode === mode ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="h-5 w-px bg-border" />
+            <div className="flex items-center gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Zoom Scale:</span>
               <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
                 {(['day', 'week', 'month'] as ZoomMode[]).map((mode) => (
@@ -196,16 +222,20 @@ export function GanttRibbon({
                 </button>
               </div>
             </div>
-            <div className="h-5 w-px bg-border" />
-            <button
-              type="button"
-              onClick={onToggleGanttVisibility}
-              aria-pressed={isGanttVisible}
-              title={isGanttVisible ? 'Hide Gantt chart' : 'Show Gantt chart'}
-              className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${isGanttVisible ? 'border-border bg-background text-foreground hover:bg-muted' : 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'}`}
-            >
-              {isGanttVisible ? 'Hide Gantt Chart' : 'Show Gantt Chart'}
-            </button>
+            {viewMode === 'gantt' && (
+              <>
+                <div className="h-5 w-px bg-border" />
+                <button
+                  type="button"
+                  onClick={onToggleGanttVisibility}
+                  aria-pressed={isGanttVisible}
+                  title={isGanttVisible ? 'Hide Gantt chart' : 'Show Gantt chart'}
+                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${isGanttVisible ? 'border-border bg-background text-foreground hover:bg-muted' : 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'}`}
+                >
+                  {isGanttVisible ? 'Hide Gantt Chart' : 'Show Gantt Chart'}
+                </button>
+              </>
+            )}
           </div>
         )}
         {activeTab === 'resources' && <div className="flex items-center gap-3 overflow-x-auto py-1"><button type="button" onClick={onAddResource} className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"><UserPlus className="h-3.5 w-3.5" />Add resource</button><span className="text-xs text-muted-foreground">{resourceCount} {resourceCount === 1 ? 'resource' : 'resources'} available</span></div>}

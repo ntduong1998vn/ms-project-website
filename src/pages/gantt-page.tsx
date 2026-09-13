@@ -9,6 +9,7 @@ import { ResourcesPanel } from '@/components/gantt/resources-panel'
 import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
 import { useGanttColumns } from '@/components/gantt/use-gantt-columns'
 import { useGanttProject } from '@/hooks/use-gantt-project'
+import { ResourceUsageView, TaskUsageView } from '@/components/gantt/usage-views'
 
 export function GanttPage() {
   const { state, derived, actions, gantt, fileInputRef } = useGanttProject()
@@ -23,6 +24,7 @@ export function GanttPage() {
     setIsColumnChooserOpen,
     isWorkColumnVisible,
     isGanttVisible,
+    viewMode,
     activeTab,
     setActiveTab,
     selectedTaskId,
@@ -90,6 +92,8 @@ export function GanttPage() {
           onAddResource={actions.handleAddResource}
           isGanttVisible={isGanttVisible}
           onToggleGanttVisibility={actions.handleToggleGanttVisibility}
+          viewMode={viewMode}
+          onViewModeChange={actions.handleViewModeChange}
         />
       }
       overlays={
@@ -115,6 +119,24 @@ export function GanttPage() {
           onAdd={actions.handleAddResource}
           onDelete={actions.handleDeleteResource}
           onChange={actions.handleResourceChange}
+        />
+      ) : viewMode === 'resource-usage' ? (
+        <ResourceUsageView
+          tasks={tasks}
+          resources={resourceList}
+          calendar={calendarConfig}
+          durationUnit={durationUnit}
+          zoom={zoom}
+          onTimescaleChange={(timescale) => setZoom(timescale)}
+        />
+      ) : viewMode === 'task-usage' ? (
+        <TaskUsageView
+          tasks={tasks}
+          resources={resourceList}
+          calendar={calendarConfig}
+          durationUnit={durationUnit}
+          zoom={zoom}
+          onTimescaleChange={(timescale) => setZoom(timescale)}
         />
       ) : (
         <div className="flex h-full min-h-0 w-full">

@@ -3,7 +3,7 @@ import { type IApi, type ILink, type IResource, type IScaleConfig, type ITask } 
 import { sampleLinks, sampleResources, sampleTasks } from '@/data/sample-gantt-data'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 import type { CsvImportData, CsvTaskMapping } from '@/types/gantt-csv'
-import type { RibbonTab, ZoomMode } from '@/components/gantt/gantt-ribbon'
+import type { RibbonTab, ViewMode, ZoomMode } from '@/components/gantt/gantt-ribbon'
 import { importGanttCsv, serializeGanttCsv } from '@/lib/gantt-csv'
 import { autoScheduleTasks, calculateEndDate, calculateTaskDuration, createSvarCalendarAdapter, defaultCalendarConfig, formatToDateString, getNextWorkingDay, inclusiveFinishToExclusiveEnd, type ProjectCalendarConfig } from '@/lib/scheduler'
 import { parseCsv } from '@/lib/csv'
@@ -33,6 +33,7 @@ export function useGanttProject() {
   const [activeTab, setActiveTab] = useState<RibbonTab>('task')
   const [selectedTaskId, setSelectedTaskId] = useState<string | number | null>(null)
   const [isGanttVisible, setIsGanttVisible] = useState<boolean>(true)
+  const [viewMode, setViewMode] = useState<ViewMode>('gantt')
 
   const [durationUnit, setDurationUnit] = useState<'day' | 'hour'>('day')
   const [zoom, setZoom] = useState<ZoomMode>('day')
@@ -71,6 +72,9 @@ export function useGanttProject() {
   }, [])
   const handleToggleGanttVisibility = useCallback(() => {
     setIsGanttVisible((visible) => !visible)
+  }, [])
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode)
   }, [])
 
   const handleInit = useCallback((apiInstance: IApi) => {
@@ -883,9 +887,9 @@ export function useGanttProject() {
 
 
   return {
-    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
+    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
     derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent },
-    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleExportCsv, handleImportFile, handleImportCsv, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
+    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleExportCsv, handleImportFile, handleImportCsv, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
     gantt: { api, ganttResources, scalePresets },
     fileInputRef,
   }
