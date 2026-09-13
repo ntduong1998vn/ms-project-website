@@ -10,6 +10,10 @@ on:
       - develop
       - main
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -23,4 +27,25 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec vitest run --coverage
+      - run: pnpm exec vitest run --coverage --coverage.reporter=text --coverage.reporter=json-summary
+      - name: Report test coverage
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node - <<'EOF' > /tmp/coverage.md
+          const fs = require('fs')
+          const marker = '<!-- coverage-report -->'
+          try {
+            const summary = JSON.parse(fs.readFileSync('coverage/coverage-summary.json', 'utf8'))
+            const t = summary.total
+            const row = (label, s) => `| ${label} | ${s.pct}% | ${s.covered}/${s.total} |`
+            console.log(`${marker}\n## Test Coverage\n\n| Metric | % | Covered |\n|---|---|---|\n${row('Statements', t.statements)}\n${row('Branches', t.branches)}\n${row('Functions', t.functions)}\n${row('Lines', t.lines)}\n\nThreshold: >= 90% for all metrics.`)
+          } catch {
+            console.log(`${marker}\n## Test Coverage\n\nCoverage data unavailable — tests may have failed before coverage ran.`)
+          }
+          EOF
+          cat /tmp/coverage.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/coverage.md --edit-last --create-if-missing
+          fi
