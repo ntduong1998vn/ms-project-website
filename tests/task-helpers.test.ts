@@ -3,15 +3,18 @@ import type { ILink, ITask } from '@svar-ui/react-gantt'
 
 import {
   addTaskAtPlacement,
+  buildDependencyChain,
   collectTaskSubtreeIds,
   getNextNumericTaskId,
   hasParentCycle,
   isTaskParentAllowed,
   moveTaskAtPlacement,
   remapPredecessorValue,
+  removeLinksTouching,
   resequenceProject,
   sameTaskId,
   toPositiveNumericTaskId,
+  wouldCreateDependencyCycle,
 } from '@/lib/task-helpers'
 
 type TaskWithPredecessors = ITask & { predecessors?: unknown }
@@ -146,6 +149,80 @@ describe('task hierarchy and dependency helpers', () => {
   })
 })
 
+describe('dependency chain helpers', () => {
+  it('builds a finish-to-start chain in selection order with sequential link IDs', () => {
+    const chain = buildDependencyChain([3, 1, 7], [], 10)
+
+    expect(chain).toEqual([
+      { id: 10, source: 3, target: 1, type: 'e2s' },
+      { id: 11, source: 1, target: 7, type: 'e2s' },
+    ])
+  })
+
+  it('skips duplicate and self pairs while keeping the rest of the chain', () => {
+    const links: ILink[] = [{ id: 1, source: 1, target: 2, type: 'e2s' } as ILink]
+
+    const chain = buildDependencyChain([1, 2, 2, 3], links, 5)
+
+    expect(chain).toEqual([{ id: 5, source: 2, target: 3, type: 'e2s' }])
+  })
+
+  it('skips pairs that would close a dependency cycle', () => {
+    const links: ILink[] = [{ id: 1, source: 'a', target: 'b', type: 'e2s' } as ILink]
+
+    expect(buildDependencyChain(['b', 'a'], links, 9)).toEqual([])
+    expect(buildDependencyChain(['b', 'a', 'c'], links, 9)).toEqual([
+      { id: 9, source: 'a', target: 'c', type: 'e2s' },
+    ])
+  })
+
+  it('rejects cycles formed by links added earlier in the same chain', () => {
+    // Selection ['a', 'b', 'a']: a→b is added first, then b→a would cycle.
+    expect(buildDependencyChain(['a', 'b', 'a'], [], 1)).toEqual([
+      { id: 1, source: 'a', target: 'b', type: 'e2s' },
+    ])
+  })
+
+  it('detects direct and transitive dependency cycles', () => {
+    const links: ILink[] = [
+      { id: 1, source: 1, target: 2, type: 'e2s' } as ILink,
+      { id: 2, source: 2, target: 3, type: 'e2s' } as ILink,
+    ]
+
+    expect(wouldCreateDependencyCycle(links, 2, 1)).toBe(true)
+    expect(wouldCreateDependencyCycle(links, 3, 1)).toBe(true)
+    expect(wouldCreateDependencyCycle(links, 1, 3)).toBe(false)
+    expect(wouldCreateDependencyCycle(links, 4, 1)).toBe(false)
+  })
+
+  it('removes incoming and outgoing links touching the selected tasks', () => {
+    const links: ILink[] = [
+      { id: 1, source: 1, target: 2, type: 'e2s' } as ILink,
+      { id: 2, source: 2, target: 3, type: 'e2s' } as ILink,
+      { id: 3, source: 3, target: 4, type: 'e2s' } as ILink,
+      { id: 4, source: 5, target: 6, type: 'e2s' } as ILink,
+    ]
+
+    expect(removeLinksTouching(links, [2])).toEqual([
+      { id: 3, source: 3, target: 4, type: 'e2s' },
+      { id: 4, source: 5, target: 6, type: 'e2s' },
+    ])
+    expect(removeLinksTouching(links, [2, 5])).toEqual([
+      { id: 3, source: 3, target: 4, type: 'e2s' },
+    ])
+  })
+
+  it('returns an equal list when no link touches the selected tasks', () => {
+    const links: ILink[] = [
+      { id: 1, source: 1, target: 2, type: 'e2s' } as ILink,
+      { id: 2, source: 'a', target: 'b', type: 's2s' } as ILink,
+    ]
+
+    expect(removeLinksTouching(links, [9])).toEqual(links)
+    expect(removeLinksTouching(links, [])).toEqual(links)
+  })
+})
+
 describe('task placement helpers', () => {
   it('adds tasks before and after a target using the target sibling parent', () => {
     const tasks = [
@@ -236,7 +313,7 @@ describe('task placement helpers', () => {
     expect(result[3]).toMatchObject({ id: 2, parent: 4 })
   })
 
-  it('keeps an explicit summary type when moving its last child away', () => {
+  it('keeps an explicit summary type but clears open when moving its last child away', () => {
     const tasks = [
       task(1, 'parent', { type: 'summary', open: true }),
       task(2, 'child', { parent: 1 }),
@@ -246,7 +323,27 @@ describe('task placement helpers', () => {
     const result = moveTaskAtPlacement(tasks, 2, 3, 'after')
 
     expect(ids(result)).toEqual([1, 3, 2])
-    expect(result[0]).toMatchObject({ id: 1, type: 'summary', open: true })
+    expect(result[0]).toMatchObject({ id: 1, type: 'summary' })
+    // SVAR's toArray recurses into data whenever open === true; a childless
+    // task has data === null, so a stale open flag crashes the Gantt store.
+    expect(result[0]).not.toHaveProperty('open')
+  })
+
+  it('clears open on a regular task left childless by outdent', () => {
+    // Repro of the white-screen crash: Add Task -> Indent (task 3 becomes a
+    // child of regular task 2, which gets open: true) -> Outdent.
+    const tasks = [
+      task(1, 'root', { type: 'summary', open: true }),
+      task(2, 'parent', { parent: 1, open: true }),
+      task(3, 'new task', { parent: 2 }),
+    ]
+
+    const result = moveTaskAtPlacement(tasks, 3, 2, 'after')
+
+    expect(ids(result)).toEqual([1, 2, 3])
+    expect(result[1]).toMatchObject({ id: 2, parent: 1 })
+    expect(result[1]).not.toHaveProperty('open')
+    expect(result[2]).toMatchObject({ id: 3, parent: 1 })
   })
 
   it('moves nested siblings up and down while retaining their parent', () => {
