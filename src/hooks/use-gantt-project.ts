@@ -9,7 +9,7 @@ import { importGanttCsv, serializeGanttCsv } from '@/lib/gantt-csv'
 import { autoScheduleTasks, calculateEndDate, calculateTaskDuration, createSvarCalendarAdapter, defaultCalendarConfig, formatToDateString, getNextWorkingDay, inclusiveFinishToExclusiveEnd, type ProjectCalendarConfig } from '@/lib/scheduler'
 import { parseCsv } from '@/lib/csv'
 import { parseClipboardTable } from '@/lib/clipboard'
-import { addTaskAtPlacement, collectTaskSubtreeIds, getNextNumericTaskId, isTaskParentAllowed, moveTaskAtPlacement, resequenceProject, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
+import { addTaskAtPlacement, buildDependencyChain, collectTaskSubtreeIds, getNextNumericTaskId, isTaskParentAllowed, moveTaskAtPlacement, removeLinksTouching, resequenceProject, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
 
 type TaskPlacementMode = 'before' | 'after' | 'child' | 'up' | 'down'
 type DependencyType = ILink['type']
@@ -35,6 +35,7 @@ export function useGanttProject() {
   const [isWorkColumnVisible, setIsWorkColumnVisible] = useState<boolean>(false)
   const [activeTab, setActiveTab] = useState<RibbonTab>('task')
   const [selectedTaskId, setSelectedTaskId] = useState<string | number | null>(null)
+  const [selectedTaskIds, setSelectedTaskIds] = useState<(string | number)[]>([])
   const [isGanttVisible, setIsGanttVisible] = useState<boolean>(true)
   const [viewMode, setViewMode] = useState<ViewMode>('gantt')
 
@@ -57,21 +58,54 @@ export function useGanttProject() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const calendarConfigRef = useRef(calendarConfig)
   const durationUnitRef = useRef(durationUnit)
+  const tasksRef = useRef(tasks)
+  const selectedTaskIdRef = useRef(selectedTaskId)
+  const selectedTaskIdsRef = useRef(selectedTaskIds)
 
   useLayoutEffect(() => {
     calendarConfigRef.current = calendarConfig
     durationUnitRef.current = durationUnit
-  }, [calendarConfig, durationUnit])
+    tasksRef.current = tasks
+    selectedTaskIdRef.current = selectedTaskId
+    selectedTaskIdsRef.current = selectedTaskIds
+  }, [calendarConfig, durationUnit, tasks, selectedTaskId, selectedTaskIds])
 
   useLayoutEffect(() => {
     if (!api) return
     injectSvarCalendar(api, calendarConfig, durationUnit)
   }, [api, calendarConfig, durationUnit])
 
-  const handleTaskSelection = useCallback((ev: { id?: string | number } | undefined) => {
-    if (ev?.id !== undefined) {
-      setSelectedTaskId(ev.id)
+  const handleTaskSelection = useCallback((ev: { id?: string | number; toggle?: boolean; range?: boolean } | undefined) => {
+    if (ev?.id === undefined) return
+    const id = ev.id
+    if (ev.toggle) {
+      const current = selectedTaskIdsRef.current
+      const next = current.some((selectedId) => sameTaskId(selectedId, id))
+        ? current.filter((selectedId) => !sameTaskId(selectedId, id))
+        : [...current, id]
+      setSelectedTaskIds(next)
+      setSelectedTaskId(next.length > 0 ? next[next.length - 1] : null)
+      return
     }
+    const anchorId = selectedTaskIdRef.current
+    if (ev.range && anchorId !== null) {
+      const currentTasks = tasksRef.current
+      const anchorIndex = currentTasks.findIndex((task) => sameTaskId(task.id, anchorId))
+      const targetIndex = currentTasks.findIndex((task) => sameTaskId(task.id, id))
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const from = Math.min(anchorIndex, targetIndex)
+        const to = Math.max(anchorIndex, targetIndex)
+        const rangeIds = currentTasks
+          .slice(from, to + 1)
+          .map((task) => task.id)
+          .filter((taskId): taskId is string | number => taskId !== undefined)
+        setSelectedTaskIds(rangeIds)
+        setSelectedTaskId(id)
+        return
+      }
+    }
+    setSelectedTaskIds([id])
+    setSelectedTaskId(id)
   }, [])
   const handleToggleGanttVisibility = useCallback(() => {
     setIsGanttVisible((visible) => !visible)
@@ -87,7 +121,8 @@ export function useGanttProject() {
     setApi(apiInstance)
 
     // Route double-click/editor activation to the custom Task Info panel.
-    apiInstance.on('select-task', handleTaskSelection)
+    // select-task itself is handled via the onSelectTask prop; registering it
+    // here too would invoke handleTaskSelection twice per exec.
     apiInstance.intercept('show-editor', (ev: { id?: string | number } | undefined) => {
       handleTaskSelection(ev)
       return false
@@ -118,6 +153,9 @@ export function useGanttProject() {
     }) => {
       if (inProgress) return
       setSelectedTaskId(id)
+      setSelectedTaskIds((current) =>
+        current.some((selectedId) => sameTaskId(selectedId, id)) ? current : [id]
+      )
 
       let currentLinks = links
       if (task.predecessors !== undefined) {
@@ -384,6 +422,7 @@ export function useGanttProject() {
         : newTasksList
       setTasks(scheduled)
       setSelectedTaskId(taskId)
+      setSelectedTaskIds([taskId])
     },
     [calendarConfig, durationUnit, isAutoSchedule, links, tasks]
   )
@@ -408,6 +447,7 @@ export function useGanttProject() {
         : movedTasks
       setTasks(scheduled)
       setSelectedTaskId(id)
+      setSelectedTaskIds([id])
     },
     [calendarConfig, durationUnit, isAutoSchedule, links, tasks]
   )
@@ -430,6 +470,7 @@ export function useGanttProject() {
       setTasks(scheduled)
       setLinks(resequenced.links)
       setSelectedTaskId(resequenced.selectedTaskId)
+      setSelectedTaskIds(resequenced.selectedTaskId === null ? [] : [resequenced.selectedTaskId])
     },
     [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks]
   )
@@ -632,6 +673,7 @@ export function useGanttProject() {
 
     setTasks(scheduled)
     setSelectedTaskId(nextId)
+    setSelectedTaskIds([nextId])
   }, [calendarConfig, durationUnit, isAutoSchedule, links, tasks])
 
   // Toolbar Actions: Add Milestone
@@ -669,6 +711,7 @@ export function useGanttProject() {
 
     setTasks(scheduled)
     setSelectedTaskId(nextId)
+    setSelectedTaskIds([nextId])
   }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks])
 
   // Toolbar Actions: Indent Task
@@ -733,7 +776,37 @@ export function useGanttProject() {
     setTasks(scheduled)
     setLinks(resequenced.links)
     setSelectedTaskId(null)
+    setSelectedTaskIds([])
   }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks])
+
+  // Toolbar Actions: Link Selected Tasks (finish-to-start chain in selection order)
+  const handleLinkSelectedTasks = useCallback(() => {
+    if (selectedTaskIds.length < 2) return
+    const nextLinkId =
+      links.length > 0 ? Math.max(...links.map((link) => Number(link.id) || 0)) + 1 : 1
+    const chain = buildDependencyChain(selectedTaskIds, links, nextLinkId)
+    if (chain.length === 0) return
+    const newLinks = [...links, ...chain]
+    setLinks(newLinks)
+    if (isAutoSchedule) {
+      setTasks((prevTasks) =>
+        autoScheduleTasks(prevTasks, newLinks, calendarConfig, durationUnit)
+      )
+    }
+  }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskIds])
+
+  // Toolbar Actions: Unlink Selected Tasks (remove all dependencies touching them)
+  const handleUnlinkSelectedTasks = useCallback(() => {
+    if (selectedTaskIds.length === 0) return
+    const newLinks = removeLinksTouching(links, selectedTaskIds)
+    if (newLinks.length === links.length) return
+    setLinks(newLinks)
+    if (isAutoSchedule) {
+      setTasks((prevTasks) =>
+        autoScheduleTasks(prevTasks, newLinks, calendarConfig, durationUnit)
+      )
+    }
+  }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskIds])
 
   // File Menu: Export CSV
   const handleExportCsv = useCallback(() => {
@@ -786,6 +859,7 @@ export function useGanttProject() {
       setTasks(result.tasks)
       setLinks(result.links)
       setSelectedTaskId(null)
+      setSelectedTaskIds([])
       setCsvImportData(null)
     },
     [calendarConfig, csvImportData, durationUnit, isAutoSchedule, resourceList]
@@ -809,6 +883,7 @@ export function useGanttProject() {
       setTasks(result.tasks)
       setLinks(result.links)
       setSelectedTaskId(null)
+      setSelectedTaskIds([])
       setClipboardImportData(null)
     },
     [calendarConfig, clipboardImportData, durationUnit, isAutoSchedule, links, resourceList, tasks]
@@ -922,6 +997,7 @@ export function useGanttProject() {
     setTasks(scheduled)
     setLinks(initialLinks)
     setSelectedTaskId(null)
+    setSelectedTaskIds([])
     setResourceList(sampleResources)
   }, [calendarConfig, durationUnit, isAutoSchedule])
 
@@ -974,12 +1050,15 @@ export function useGanttProject() {
   const selectedTask = selectedTaskIndex >= 0 ? tasks[selectedTaskIndex] : null
   const canIndent = selectedTaskIndex > 0 && tasks[selectedTaskIndex - 1]?.type !== 'milestone'
   const canOutdent = selectedTask != null && selectedTask.parent != null
-
+  const canLink = selectedTaskIds.length >= 2
+  const canUnlink = links.some((link) =>
+    selectedTaskIds.some((id) => sameTaskId(link.source, id) || sameTaskId(link.target, id))
+  )
 
   return {
-    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
-    derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent },
-    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
+    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
+    derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink },
+    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
     gantt: { api, ganttResources, scalePresets },
     fileInputRef,
   }

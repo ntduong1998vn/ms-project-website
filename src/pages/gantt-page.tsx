@@ -32,6 +32,8 @@ export function GanttPage() {
     setActiveTab,
     selectedTaskId,
     setSelectedTaskId,
+    selectedTaskIds,
+    setSelectedTaskIds,
     durationUnit,
     zoom,
     setZoom,
@@ -46,6 +48,8 @@ export function GanttPage() {
     selectedTask,
     canIndent,
     canOutdent,
+    canLink,
+    canUnlink,
   } = derived
   const columns = useGanttColumns({
     tasks,
@@ -56,7 +60,10 @@ export function GanttPage() {
     isWorkColumnVisible,
     selectedTaskId,
     ganttApi: gantt.api,
-    onSelectTask: setSelectedTaskId,
+    onSelectTask: (id) => {
+      setSelectedTaskId(id)
+      setSelectedTaskIds([id])
+    },
     onDurationChange: actions.handleDurationChange,
     onStartDateChange: actions.handleStartDateChange,
     onFinishDateChange: actions.handleFinishDateChange,
@@ -89,6 +96,11 @@ export function GanttPage() {
           onIndent={actions.handleIndent}
           canOutdent={canOutdent}
           onOutdent={actions.handleOutdent}
+          selectedTaskIds={selectedTaskIds}
+          canLink={canLink}
+          onLinkTasks={actions.handleLinkSelectedTasks}
+          canUnlink={canUnlink}
+          onUnlinkTasks={actions.handleUnlinkSelectedTasks}
           selectedTask={selectedTask}
           calendarConfig={calendarConfig}
           zoom={zoom}
@@ -163,6 +175,7 @@ export function GanttPage() {
                 cellWidth={zoom === 'hour' ? 60 : 100}
                 highlightTime={actions.handleHighlightTime}
                 onSelectTask={actions.handleTaskSelection}
+                selected={selectedTaskIds}
                 onUpdateTask={actions.handleUpdateTask}
                 onAddTask={actions.handleAddTask}
                 onMoveTask={actions.handleMoveTask}
@@ -180,7 +193,7 @@ export function GanttPage() {
               tasks={tasks}
               links={links}
               resources={resourceList}
-              onClose={() => setSelectedTaskId(null)}
+              onClose={() => { setSelectedTaskId(null); setSelectedTaskIds([]) }}
               onTaskChange={actions.handleTaskInfoChange}
               onAddPredecessor={actions.handleAddTaskInfoPredecessor}
               onUpdatePredecessor={actions.handleUpdateTaskInfoPredecessor}

@@ -17,4 +17,7 @@ pnpm run test:coverage
 printf '%s\n' 'pre-push: running lint...'
 pnpm lint
 
+printf '%s\n' 'pre-push: running e2e tests...'
+pnpm test:e2e
+
 printf '%s\n' 'pre-push: all checks passed.'
