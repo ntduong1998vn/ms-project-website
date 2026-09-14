@@ -9,6 +9,8 @@ lerna-debug.log*
 
 # Test and build output
 coverage
+playwright-report/
+test-results/
 node_modules
 dist
 dist-ssr
@@ -23,3 +25,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.codegraph/

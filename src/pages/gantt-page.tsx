@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { Gantt, Willow } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
 import { CsvImportDialog } from '@/components/csv-import-dialog'
@@ -27,11 +28,14 @@ export function GanttPage() {
     setIsColumnChooserOpen,
     isWorkColumnVisible,
     isGanttVisible,
+    showCriticalPath,
     viewMode,
     activeTab,
     setActiveTab,
     selectedTaskId,
     setSelectedTaskId,
+    selectedTaskIds,
+    setSelectedTaskIds,
     durationUnit,
     zoom,
     setZoom,
@@ -46,7 +50,19 @@ export function GanttPage() {
     selectedTask,
     canIndent,
     canOutdent,
+    canLink,
+    canUnlink,
+    displayTasks,
+    displayLinks,
   } = derived
+  const { handleTaskSelection } = actions
+  const handleColumnSelectTask = useCallback(
+    (id: string | number) => {
+      handleTaskSelection({ id })
+    },
+    [handleTaskSelection]
+  )
+
   const columns = useGanttColumns({
     tasks,
     links,
@@ -56,7 +72,7 @@ export function GanttPage() {
     isWorkColumnVisible,
     selectedTaskId,
     ganttApi: gantt.api,
-    onSelectTask: setSelectedTaskId,
+    onSelectTask: handleColumnSelectTask,
     onDurationChange: actions.handleDurationChange,
     onStartDateChange: actions.handleStartDateChange,
     onFinishDateChange: actions.handleFinishDateChange,
@@ -89,6 +105,11 @@ export function GanttPage() {
           onIndent={actions.handleIndent}
           canOutdent={canOutdent}
           onOutdent={actions.handleOutdent}
+          selectedTaskIds={selectedTaskIds}
+          canLink={canLink}
+          onLinkTasks={actions.handleLinkSelectedTasks}
+          canUnlink={canUnlink}
+          onUnlinkTasks={actions.handleUnlinkSelectedTasks}
           selectedTask={selectedTask}
           calendarConfig={calendarConfig}
           zoom={zoom}
@@ -99,6 +120,8 @@ export function GanttPage() {
           isGanttVisible={isGanttVisible}
           onToggleGanttVisibility={actions.handleToggleGanttVisibility}
           viewMode={viewMode}
+          showCriticalPath={showCriticalPath}
+          onToggleCriticalPath={actions.handleToggleCriticalPath}
           onViewModeChange={actions.handleViewModeChange}
         />
       }
@@ -151,8 +174,9 @@ export function GanttPage() {
               <Gantt
                 init={actions.handleInit}
                 displayMode={isGanttVisible ? 'all' : 'grid'}
-                tasks={gantt.api ? tasks : []}
-                links={links}
+                tasks={gantt.api ? displayTasks : []}
+                links={displayLinks}
+                criticalPath={showCriticalPath ? { type: 'strict' } : null}
                 resources={gantt.ganttResources}
                 scales={gantt.scalePresets[zoom]}
                 columns={columns}
@@ -163,6 +187,7 @@ export function GanttPage() {
                 cellWidth={zoom === 'hour' ? 60 : 100}
                 highlightTime={actions.handleHighlightTime}
                 onSelectTask={actions.handleTaskSelection}
+                selected={selectedTaskIds}
                 onUpdateTask={actions.handleUpdateTask}
                 onAddTask={actions.handleAddTask}
                 onMoveTask={actions.handleMoveTask}
@@ -180,7 +205,7 @@ export function GanttPage() {
               tasks={tasks}
               links={links}
               resources={resourceList}
-              onClose={() => setSelectedTaskId(null)}
+              onClose={() => { setSelectedTaskId(null); setSelectedTaskIds([]) }}
               onTaskChange={actions.handleTaskInfoChange}
               onAddPredecessor={actions.handleAddTaskInfoPredecessor}
               onUpdatePredecessor={actions.handleUpdateTaskInfoPredecessor}

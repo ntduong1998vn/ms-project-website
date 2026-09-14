@@ -9,7 +9,8 @@ import { importGanttCsv, serializeGanttCsv } from '@/lib/gantt-csv'
 import { autoScheduleTasks, calculateEndDate, calculateTaskDuration, createSvarCalendarAdapter, defaultCalendarConfig, formatToDateString, getNextWorkingDay, inclusiveFinishToExclusiveEnd, type ProjectCalendarConfig } from '@/lib/scheduler'
 import { parseCsv } from '@/lib/csv'
 import { parseClipboardTable } from '@/lib/clipboard'
-import { addTaskAtPlacement, collectTaskSubtreeIds, getNextNumericTaskId, isTaskParentAllowed, moveTaskAtPlacement, resequenceProject, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
+import { addTaskAtPlacement, buildDependencyChain, collectTaskSubtreeIds, getNextNumericTaskId, isTaskParentAllowed, moveTaskAtPlacement, removeLinksTouching, resequenceProject, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
+import { computeCriticalPath } from '@/lib/critical-path'
 
 type TaskPlacementMode = 'before' | 'after' | 'child' | 'up' | 'down'
 type DependencyType = ILink['type']
@@ -35,7 +36,9 @@ export function useGanttProject() {
   const [isWorkColumnVisible, setIsWorkColumnVisible] = useState<boolean>(false)
   const [activeTab, setActiveTab] = useState<RibbonTab>('task')
   const [selectedTaskId, setSelectedTaskId] = useState<string | number | null>(null)
+  const [selectedTaskIds, setSelectedTaskIds] = useState<(string | number)[]>([])
   const [isGanttVisible, setIsGanttVisible] = useState<boolean>(true)
+  const [showCriticalPath, setShowCriticalPath] = useState<boolean>(false)
   const [viewMode, setViewMode] = useState<ViewMode>('gantt')
 
   const [durationUnit, setDurationUnit] = useState<'day' | 'hour'>('day')
@@ -57,24 +60,77 @@ export function useGanttProject() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const calendarConfigRef = useRef(calendarConfig)
   const durationUnitRef = useRef(durationUnit)
+  const tasksRef = useRef(tasks)
+  const linksRef = useRef(links)
+  const apiRef = useRef<IApi | null>(null)
+  const selectedTaskIdRef = useRef(selectedTaskId)
+  const selectedTaskIdsRef = useRef(selectedTaskIds)
+  // SVAR dispatches `delete-task` once per selected task synchronously, but
+  // resequencing renumbers ids so later dispatches in the same burst carry
+  // stale ids. The first dispatch deletes the whole selection; this set marks
+  // the already-deleted ids so the redundant dispatches are ignored. Cleared
+  // in the layout effect below once the burst has committed.
+  const deletedTaskIdsRef = useRef<Set<string>>(new Set())
 
   useLayoutEffect(() => {
     calendarConfigRef.current = calendarConfig
     durationUnitRef.current = durationUnit
-  }, [calendarConfig, durationUnit])
+    tasksRef.current = tasks
+    linksRef.current = links
+    apiRef.current = api
+    selectedTaskIdRef.current = selectedTaskId
+    selectedTaskIdsRef.current = selectedTaskIds
+    deletedTaskIdsRef.current.clear()
+  }, [api, calendarConfig, durationUnit, tasks, links, selectedTaskId, selectedTaskIds])
 
   useLayoutEffect(() => {
     if (!api) return
     injectSvarCalendar(api, calendarConfig, durationUnit)
   }, [api, calendarConfig, durationUnit])
+  useLayoutEffect(() => {
+    if (!api) return
+    api.getStores?.()?.data?.setState({ criticalPath: showCriticalPath ? { type: 'strict' } : null })
+  }, [api, showCriticalPath])
 
-  const handleTaskSelection = useCallback((ev: { id?: string | number } | undefined) => {
-    if (ev?.id !== undefined) {
-      setSelectedTaskId(ev.id)
+  const handleTaskSelection = useCallback((ev: { id?: string | number; toggle?: boolean; range?: boolean } | undefined) => {
+    if (ev?.id === undefined) return
+    const id = ev.id
+    if (ev.toggle) {
+      const current = selectedTaskIdsRef.current
+      const next = current.some((selectedId) => sameTaskId(selectedId, id))
+        ? current.filter((selectedId) => !sameTaskId(selectedId, id))
+        : [...current, id]
+      setSelectedTaskIds(next)
+      setSelectedTaskId(next.length > 0 ? next[next.length - 1] : null)
+      return
     }
+    const anchorId = selectedTaskIdRef.current
+    if (ev.range && anchorId !== null) {
+      // The grid may sort/filter rows, so range math must run on the store's
+      // displayed order (`_tasks`), not the app's insertion-order array.
+      const currentTasks = apiRef.current?.getState()._tasks ?? tasksRef.current
+      const anchorIndex = currentTasks.findIndex((task) => sameTaskId(task.id, anchorId))
+      const targetIndex = currentTasks.findIndex((task) => sameTaskId(task.id, id))
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const from = Math.min(anchorIndex, targetIndex)
+        const to = Math.max(anchorIndex, targetIndex)
+        const rangeIds = currentTasks
+          .slice(from, to + 1)
+          .map((task) => task.id)
+          .filter((taskId): taskId is string | number => taskId !== undefined)
+        setSelectedTaskIds(rangeIds)
+        setSelectedTaskId(id)
+        return
+      }
+    }
+    setSelectedTaskIds([id])
+    setSelectedTaskId(id)
   }, [])
   const handleToggleGanttVisibility = useCallback(() => {
     setIsGanttVisible((visible) => !visible)
+  }, [])
+  const handleToggleCriticalPath = useCallback(() => {
+    setShowCriticalPath((v) => !v)
   }, [])
   const handleViewModeChange = useCallback((mode: ViewMode) => {
     setViewMode(mode)
@@ -84,10 +140,12 @@ export function useGanttProject() {
     // Inject before publishing the API so the first controlled task refresh
     // observes the project calendar instead of SVAR's calendar-less default.
     injectSvarCalendar(apiInstance, calendarConfigRef.current, durationUnitRef.current)
+    apiRef.current = apiInstance
     setApi(apiInstance)
 
     // Route double-click/editor activation to the custom Task Info panel.
-    apiInstance.on('select-task', handleTaskSelection)
+    // select-task itself is handled via the onSelectTask prop; registering it
+    // here too would invoke handleTaskSelection twice per exec.
     apiInstance.intercept('show-editor', (ev: { id?: string | number } | undefined) => {
       handleTaskSelection(ev)
       return false
@@ -118,6 +176,9 @@ export function useGanttProject() {
     }) => {
       if (inProgress) return
       setSelectedTaskId(id)
+      setSelectedTaskIds((current) =>
+        current.some((selectedId) => sameTaskId(selectedId, id)) ? current : [id]
+      )
 
       let currentLinks = links
       if (task.predecessors !== undefined) {
@@ -384,6 +445,7 @@ export function useGanttProject() {
         : newTasksList
       setTasks(scheduled)
       setSelectedTaskId(taskId)
+      setSelectedTaskIds([taskId])
     },
     [calendarConfig, durationUnit, isAutoSchedule, links, tasks]
   )
@@ -408,30 +470,59 @@ export function useGanttProject() {
         : movedTasks
       setTasks(scheduled)
       setSelectedTaskId(id)
+      setSelectedTaskIds([id])
     },
     [calendarConfig, durationUnit, isAutoSchedule, links, tasks]
   )
 
   const handleDeleteTask = useCallback(
     ({ id }: { id: string | number }) => {
-      const idsToDelete = collectTaskSubtreeIds(tasks, id)
-      const remainingTasks = tasks.filter(
-        (task) => task.id === undefined || !idsToDelete.has(String(task.id))
-      )
-      const remainingLinks = links.filter(
-        (link) =>
-          !idsToDelete.has(String(link.source)) &&
-          !idsToDelete.has(String(link.target))
-      )
-      const resequenced = resequenceProject(remainingTasks, remainingLinks, selectedTaskId)
-      const scheduled = isAutoSchedule
-        ? autoScheduleTasks(resequenced.tasks, resequenced.links, calendarConfig, durationUnit)
-        : resequenced.tasks
-      setTasks(scheduled)
-      setLinks(resequenced.links)
-      setSelectedTaskId(resequenced.selectedTaskId)
+      // SVAR fires `delete-task` once per selected task in a synchronous burst.
+      // The first dispatch deletes the union of every selected subtree; later
+      // dispatches carry ids that resequencing already renumbered away, so
+      // they are ignored via deletedTaskIdsRef.
+      if (deletedTaskIdsRef.current.has(String(id))) return
+
+      const selection = selectedTaskIdsRef.current
+      const isBatchDelete =
+        selection.length > 1 && selection.some((selectedId) => sameTaskId(selectedId, id))
+      const rootIds = isBatchDelete ? selection : [id]
+
+      // Compute the deletion set from the pre-delete snapshot so every
+      // selected subtree is collected before ids are resequenced.
+      const idsToDelete = new Set<string>()
+      for (const rootId of rootIds) {
+        for (const subtreeId of collectTaskSubtreeIds(tasksRef.current, rootId)) {
+          idsToDelete.add(subtreeId)
+        }
+      }
+      for (const deletedId of idsToDelete) {
+        deletedTaskIdsRef.current.add(deletedId)
+      }
+
+      // Functional updates: each dispatch in the burst must see the latest
+      // state, not the render-closure `tasks`/`links`.
+      let nextLinks: ILink[] | null = null
+      setTasks((prevTasks) => {
+        const remainingTasks = prevTasks.filter(
+          (task) => task.id === undefined || !idsToDelete.has(String(task.id))
+        )
+        const remainingLinks = linksRef.current.filter(
+          (link) =>
+            !idsToDelete.has(String(link.source)) &&
+            !idsToDelete.has(String(link.target))
+        )
+        const resequenced = resequenceProject(remainingTasks, remainingLinks, null)
+        nextLinks = resequenced.links
+        return isAutoSchedule
+          ? autoScheduleTasks(resequenced.tasks, resequenced.links, calendarConfig, durationUnit)
+          : resequenced.tasks
+      })
+      setLinks((prevLinks) => nextLinks ?? prevLinks)
+      setSelectedTaskId(null)
+      setSelectedTaskIds([])
     },
-    [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks]
+    [calendarConfig, durationUnit, isAutoSchedule]
   )
 
   const handleAddLink = useCallback(
@@ -632,6 +723,7 @@ export function useGanttProject() {
 
     setTasks(scheduled)
     setSelectedTaskId(nextId)
+    setSelectedTaskIds([nextId])
   }, [calendarConfig, durationUnit, isAutoSchedule, links, tasks])
 
   // Toolbar Actions: Add Milestone
@@ -669,6 +761,7 @@ export function useGanttProject() {
 
     setTasks(scheduled)
     setSelectedTaskId(nextId)
+    setSelectedTaskIds([nextId])
   }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks])
 
   // Toolbar Actions: Indent Task
@@ -733,7 +826,37 @@ export function useGanttProject() {
     setTasks(scheduled)
     setLinks(resequenced.links)
     setSelectedTaskId(null)
+    setSelectedTaskIds([])
   }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks])
+
+  // Toolbar Actions: Link Selected Tasks (finish-to-start chain in selection order)
+  const handleLinkSelectedTasks = useCallback(() => {
+    if (selectedTaskIds.length < 2) return
+    const nextLinkId =
+      links.length > 0 ? Math.max(...links.map((link) => Number(link.id) || 0)) + 1 : 1
+    const chain = buildDependencyChain(selectedTaskIds, links, nextLinkId)
+    if (chain.length === 0) return
+    const newLinks = [...links, ...chain]
+    setLinks(newLinks)
+    if (isAutoSchedule) {
+      setTasks((prevTasks) =>
+        autoScheduleTasks(prevTasks, newLinks, calendarConfig, durationUnit)
+      )
+    }
+  }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskIds])
+
+  // Toolbar Actions: Unlink Selected Tasks (remove all dependencies touching them)
+  const handleUnlinkSelectedTasks = useCallback(() => {
+    if (selectedTaskIds.length === 0) return
+    const newLinks = removeLinksTouching(links, selectedTaskIds)
+    if (newLinks.length === links.length) return
+    setLinks(newLinks)
+    if (isAutoSchedule) {
+      setTasks((prevTasks) =>
+        autoScheduleTasks(prevTasks, newLinks, calendarConfig, durationUnit)
+      )
+    }
+  }, [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskIds])
 
   // File Menu: Export CSV
   const handleExportCsv = useCallback(() => {
@@ -786,6 +909,7 @@ export function useGanttProject() {
       setTasks(result.tasks)
       setLinks(result.links)
       setSelectedTaskId(null)
+      setSelectedTaskIds([])
       setCsvImportData(null)
     },
     [calendarConfig, csvImportData, durationUnit, isAutoSchedule, resourceList]
@@ -809,6 +933,7 @@ export function useGanttProject() {
       setTasks(result.tasks)
       setLinks(result.links)
       setSelectedTaskId(null)
+      setSelectedTaskIds([])
       setClipboardImportData(null)
     },
     [calendarConfig, clipboardImportData, durationUnit, isAutoSchedule, links, resourceList, tasks]
@@ -922,6 +1047,7 @@ export function useGanttProject() {
     setTasks(scheduled)
     setLinks(initialLinks)
     setSelectedTaskId(null)
+    setSelectedTaskIds([])
     setResourceList(sampleResources)
   }, [calendarConfig, durationUnit, isAutoSchedule])
 
@@ -968,18 +1094,33 @@ export function useGanttProject() {
   const totalTasks = tasks.filter((t) => t.type !== 'summary').length
   const summaryTasks = tasks.filter((t) => t.type === 'summary').length
   const completedTasks = tasks.filter((t) => t.progress === 100).length
+  const critical = useMemo(
+    () => (showCriticalPath ? computeCriticalPath(tasks, links, calendarConfig, durationUnit) : null),
+    [showCriticalPath, tasks, links, calendarConfig, durationUnit]
+  )
+  const displayTasks = useMemo(
+    () => (critical ? tasks.map((t) => (t.id !== undefined && critical.taskIds.has(String(t.id)) ? { ...t, critical: true } : t)) : tasks),
+    [critical, tasks]
+  )
+  const displayLinks = useMemo(
+    () => (critical ? links.map((l) => (l.id !== undefined && critical.linkIds.has(String(l.id)) ? { ...l, critical: true } : l)) : links),
+    [critical, links]
+  )
 
   const selectedTaskIndex =
     selectedTaskId != null ? tasks.findIndex((task) => sameTaskId(task.id, selectedTaskId)) : -1
   const selectedTask = selectedTaskIndex >= 0 ? tasks[selectedTaskIndex] : null
   const canIndent = selectedTaskIndex > 0 && tasks[selectedTaskIndex - 1]?.type !== 'milestone'
   const canOutdent = selectedTask != null && selectedTask.parent != null
-
+  const canLink = selectedTaskIds.length >= 2
+  const canUnlink = links.some((link) =>
+    selectedTaskIds.some((id) => sameTaskId(link.source, id) || sameTaskId(link.target, id))
+  )
 
   return {
-    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
-    derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent },
-    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
+    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
+    derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink, displayTasks, displayLinks },
+    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
     gantt: { api, ganttResources, scalePresets },
     fileInputRef,
   }

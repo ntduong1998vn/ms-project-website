@@ -249,7 +249,23 @@ export function moveTaskAtPlacement(
           ...movedBlock,
           ...remaining.slice(insertionIndex),
         ]
-  return nextTasks
+
+  // A task left childless must not keep `open`: SVAR's DataTree.toArray
+  // recurses into `data` whenever open === true, and leaf nodes have
+  // data === null, so a stale flag crashes the store (white screen).
+  const parentIds = new Set(
+    nextTasks
+      .filter((task) => task.parent !== undefined)
+      .map((task) => String(task.parent))
+  )
+  return nextTasks.map((task) => {
+    if (task.open === undefined || task.id === undefined || parentIds.has(String(task.id))) {
+      return task
+    }
+    const cleared = { ...task }
+    delete cleared.open
+    return cleared
+  })
 }
 
 function subtreeEndIndex(tasks: ITask[], rootIndex: number): number {
@@ -263,5 +279,58 @@ function subtreeEndIndex(tasks: ITask[], rootIndex: number): number {
     end += 1
   }
   return end
+}
+
+export function wouldCreateDependencyCycle(
+  links: ILink[],
+  source: string | number,
+  target: string | number
+): boolean {
+  // Adding source→target closes a cycle when target can already reach source.
+  const visited = new Set<string>()
+  const pending: (string | number)[] = [target]
+  while (pending.length > 0) {
+    const current = pending.pop() as string | number
+    if (sameTaskId(current, source)) return true
+    const key = String(current)
+    if (visited.has(key)) continue
+    visited.add(key)
+    for (const link of links) {
+      if (sameTaskId(link.source, current)) pending.push(link.target)
+    }
+  }
+  return false
+}
+
+export function buildDependencyChain(
+  selectedIds: (string | number)[],
+  links: ILink[],
+  startLinkId: number
+): ILink[] {
+  const chain: ILink[] = []
+  const candidates = [...links]
+  for (let index = 0; index < selectedIds.length - 1; index += 1) {
+    const source = selectedIds[index]
+    const target = selectedIds[index + 1]
+    if (sameTaskId(source, target)) continue
+    const duplicate = candidates.some(
+      (link) => sameTaskId(link.source, source) && sameTaskId(link.target, target)
+    )
+    if (duplicate || wouldCreateDependencyCycle(candidates, source, target)) continue
+    const link: ILink = { id: startLinkId + chain.length, source, target, type: 'e2s' }
+    chain.push(link)
+    candidates.push(link)
+  }
+  return chain
+}
+
+export function removeLinksTouching(
+  links: ILink[],
+  selectedIds: (string | number)[]
+): ILink[] {
+  return links.filter(
+    (link) =>
+      !selectedIds.some((id) => sameTaskId(link.source, id) || sameTaskId(link.target, id))
+  )
 }
 

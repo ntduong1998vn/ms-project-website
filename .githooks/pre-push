@@ -17,4 +17,11 @@ pnpm run test:coverage
 printf '%s\n' 'pre-push: running lint...'
 pnpm lint
 
+# Playwright e2e tests require browser binaries. If this is your first push, run:
+#   pnpm exec playwright install
+if [ ! -d "$HOME/Library/Caches/ms-playwright" ] && [ ! -d "$HOME/.cache/ms-playwright" ]; then
+  printf '%s\n' 'pre-push: Playwright browsers not found. Run: pnpm exec playwright install' >&2
+  exit 1
+fi
+
 printf '%s\n' 'pre-push: all checks passed.'
