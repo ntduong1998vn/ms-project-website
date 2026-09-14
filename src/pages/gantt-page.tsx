@@ -7,6 +7,9 @@ import { CalendarSettingsDialog } from '@/components/calendar-settings-dialog'
 import { IntegrationSettingsDialog } from '@/components/integration-settings-dialog'
 import { AppLayout } from '@/components/layout/app-layout'
 import { ColumnChooserDialog } from '@/components/gantt/column-chooser-dialog'
+import { DeleteTasksDialog } from '@/components/gantt/delete-tasks-dialog'
+import { RedmineGetDialog } from '@/components/gantt/redmine-get-dialog'
+import { Toaster } from '@/components/ui/sonner'
 import { GanttRibbon } from '@/components/gantt/gantt-ribbon'
 import { ResourcesPanel } from '@/components/gantt/resources-panel'
 import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
@@ -37,6 +40,7 @@ export function GanttPage() {
     setSelectedTaskId,
     selectedTaskIds,
     setSelectedTaskIds,
+    pendingDeleteIds,
     durationUnit,
     zoom,
     setZoom,
@@ -46,6 +50,8 @@ export function GanttPage() {
     integrationSettings,
     isIntegrationDialogOpen,
     setIsIntegrationDialogOpen,
+    isRedmineGetDialogOpen,
+    setIsRedmineGetDialogOpen,
     integrationBusy,
     lastSyncAt,
   } = state
@@ -59,6 +65,7 @@ export function GanttPage() {
     canLink,
     canUnlink,
     displayTasks,
+    pendingDeleteTasks,
     displayLinks,
   } = derived
   const { handleTaskSelection } = actions
@@ -105,8 +112,7 @@ export function GanttPage() {
           onToggleAutoSchedule={actions.handleToggleAutoSchedule}
           onAddTask={actions.handleAddTaskAction}
           onAddMilestone={actions.handleAddMilestoneAction}
-          onDeleteSelectedTask={actions.handleDeleteSelectedTask}
-          selectedTaskId={selectedTaskId}
+          onDeleteSelectedTask={actions.handleRequestDeleteSelectedTasks}
           canIndent={canIndent}
           onIndent={actions.handleIndent}
           canOutdent={canOutdent}
@@ -157,6 +163,21 @@ export function GanttPage() {
             onTestConnection={actions.handleTestIntegrationConnection}
             onFetchMetadata={actions.handleFetchIntegrationMetadata}
           />
+          <DeleteTasksDialog
+            open={pendingDeleteIds !== null}
+            onOpenChange={(open) => { if (!open) actions.handleCancelDeleteTasks() }}
+            tasks={pendingDeleteTasks}
+            selectedCount={selectedTaskIds.length}
+            onConfirm={actions.handleConfirmDeleteTasks}
+          />
+          <RedmineGetDialog
+            open={isRedmineGetDialogOpen}
+            onOpenChange={setIsRedmineGetDialogOpen}
+            taskCount={tasks.length}
+            onClearAndGet={actions.handleRedmineGetClear}
+            onKeepAndUpsert={actions.handleRedmineGetUpsert}
+          />
+          <Toaster richColors closeButton position="top-right" />
         </>
       }
     >
