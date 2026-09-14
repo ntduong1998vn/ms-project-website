@@ -21,6 +21,7 @@ import {
   Outdent,
   PlusCircle,
   Trash2,
+  Route,
   Upload,
   UserPlus,
   Users,
@@ -68,7 +69,9 @@ export type GanttRibbonProps = {
   onDurationUnitChange: (unit: 'day' | 'hour') => void
   onAddResource: () => void
   isGanttVisible: boolean
+  showCriticalPath: boolean
   onToggleGanttVisibility: () => void
+  onToggleCriticalPath: () => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
 }
@@ -108,7 +111,9 @@ export function GanttRibbon({
   onDurationUnitChange,
   onAddResource,
   isGanttVisible,
+  showCriticalPath,
   onToggleGanttVisibility,
+  onToggleCriticalPath,
   viewMode,
   onViewModeChange,
 }: GanttRibbonProps) {
@@ -243,7 +248,7 @@ export function GanttRibbon({
                 </button>
               ))}
             </div>
-            {viewMode === 'gantt' && (
+            {viewMode === 'gantt' && (<>)
               <button
                 type="button"
                 onClick={onToggleGanttVisibility}
@@ -254,7 +259,17 @@ export function GanttRibbon({
                 {isGanttVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                 <span className="text-[10px] leading-tight text-center">{isGanttVisible ? 'Hide Gantt Chart' : 'Show Gantt Chart'}</span>
               </button>
-            )}
+                <button
+                  type="button"
+                  onClick={onToggleCriticalPath}
+                  aria-pressed={showCriticalPath}
+                  title="Highlight tasks on the critical path (zero slack)"
+                  className={`flex flex-col items-center justify-center gap-0.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${showCriticalPath ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20' : 'border-border bg-background text-foreground hover:bg-muted'}`}
+                >
+                  <Route className="h-4 w-4" />
+                  <span className="text-[10px] leading-tight text-center">Critical Path</span>
+                </button>
+            </>)}
           </div>
           <div className="w-px self-stretch bg-border" />
           <div className="flex items-center gap-1">

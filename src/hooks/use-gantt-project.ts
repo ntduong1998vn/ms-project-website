@@ -10,6 +10,7 @@ import { autoScheduleTasks, calculateEndDate, calculateTaskDuration, createSvarC
 import { parseCsv } from '@/lib/csv'
 import { parseClipboardTable } from '@/lib/clipboard'
 import { addTaskAtPlacement, buildDependencyChain, collectTaskSubtreeIds, getNextNumericTaskId, isTaskParentAllowed, moveTaskAtPlacement, removeLinksTouching, resequenceProject, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
+import { computeCriticalPath } from '@/lib/critical-path'
 
 type TaskPlacementMode = 'before' | 'after' | 'child' | 'up' | 'down'
 type DependencyType = ILink['type']
@@ -37,6 +38,7 @@ export function useGanttProject() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | number | null>(null)
   const [selectedTaskIds, setSelectedTaskIds] = useState<(string | number)[]>([])
   const [isGanttVisible, setIsGanttVisible] = useState<boolean>(true)
+  const [showCriticalPath, setShowCriticalPath] = useState<boolean>(false)
   const [viewMode, setViewMode] = useState<ViewMode>('gantt')
 
   const [durationUnit, setDurationUnit] = useState<'day' | 'hour'>('day')
@@ -74,6 +76,10 @@ export function useGanttProject() {
     if (!api) return
     injectSvarCalendar(api, calendarConfig, durationUnit)
   }, [api, calendarConfig, durationUnit])
+  useLayoutEffect(() => {
+    if (!api) return
+    api.getStores?.()?.data?.setState({ criticalPath: showCriticalPath ? { type: 'strict' } : null })
+  }, [api, showCriticalPath])
 
   const handleTaskSelection = useCallback((ev: { id?: string | number; toggle?: boolean; range?: boolean } | undefined) => {
     if (ev?.id === undefined) return
@@ -109,6 +115,9 @@ export function useGanttProject() {
   }, [])
   const handleToggleGanttVisibility = useCallback(() => {
     setIsGanttVisible((visible) => !visible)
+  }, [])
+  const handleToggleCriticalPath = useCallback(() => {
+    setShowCriticalPath((v) => !v)
   }, [])
   const handleViewModeChange = useCallback((mode: ViewMode) => {
     setViewMode(mode)
@@ -1044,6 +1053,18 @@ export function useGanttProject() {
   const totalTasks = tasks.filter((t) => t.type !== 'summary').length
   const summaryTasks = tasks.filter((t) => t.type === 'summary').length
   const completedTasks = tasks.filter((t) => t.progress === 100).length
+  const critical = useMemo(
+    () => (showCriticalPath ? computeCriticalPath(tasks, links, calendarConfig, durationUnit) : null),
+    [showCriticalPath, tasks, links, calendarConfig, durationUnit]
+  )
+  const displayTasks = useMemo(
+    () => (critical ? tasks.map((t) => (t.id !== undefined && critical.taskIds.has(String(t.id)) ? { ...t, critical: true } : t)) : tasks),
+    [critical, tasks]
+  )
+  const displayLinks = useMemo(
+    () => (critical ? links.map((l) => (l.id !== undefined && critical.linkIds.has(String(l.id)) ? { ...l, critical: true } : l)) : links),
+    [critical, links]
+  )
 
   const selectedTaskIndex =
     selectedTaskId != null ? tasks.findIndex((task) => sameTaskId(task.id, selectedTaskId)) : -1
@@ -1056,9 +1077,9 @@ export function useGanttProject() {
   )
 
   return {
-    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
-    derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink },
-    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
+    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
+    derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink, displayTasks, displayLinks },
+    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleDeleteSelectedTask, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn },
     gantt: { api, ganttResources, scalePresets },
     fileInputRef,
   }

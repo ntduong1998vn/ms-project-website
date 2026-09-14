@@ -27,6 +27,7 @@ export function GanttPage() {
     setIsColumnChooserOpen,
     isWorkColumnVisible,
     isGanttVisible,
+    showCriticalPath,
     viewMode,
     activeTab,
     setActiveTab,
@@ -50,6 +51,8 @@ export function GanttPage() {
     canOutdent,
     canLink,
     canUnlink,
+    displayTasks,
+    displayLinks,
   } = derived
   const columns = useGanttColumns({
     tasks,
@@ -111,6 +114,8 @@ export function GanttPage() {
           isGanttVisible={isGanttVisible}
           onToggleGanttVisibility={actions.handleToggleGanttVisibility}
           viewMode={viewMode}
+          showCriticalPath={showCriticalPath}
+          onToggleCriticalPath={actions.handleToggleCriticalPath}
           onViewModeChange={actions.handleViewModeChange}
         />
       }
@@ -162,9 +167,11 @@ export function GanttPage() {
             <Willow>
               <Gantt
                 init={actions.handleInit}
+                key={showCriticalPath ? 'critical' : 'normal'}
                 displayMode={isGanttVisible ? 'all' : 'grid'}
-                tasks={gantt.api ? tasks : []}
-                links={links}
+                tasks={gantt.api ? displayTasks : []}
+                links={displayLinks}
+                criticalPath={showCriticalPath ? { type: 'strict' } : null}
                 resources={gantt.ganttResources}
                 scales={gantt.scalePresets[zoom]}
                 columns={columns}
