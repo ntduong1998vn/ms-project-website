@@ -61,16 +61,27 @@ export function useGanttProject() {
   const calendarConfigRef = useRef(calendarConfig)
   const durationUnitRef = useRef(durationUnit)
   const tasksRef = useRef(tasks)
+  const linksRef = useRef(links)
+  const apiRef = useRef<IApi | null>(null)
   const selectedTaskIdRef = useRef(selectedTaskId)
   const selectedTaskIdsRef = useRef(selectedTaskIds)
+  // SVAR dispatches `delete-task` once per selected task synchronously, but
+  // resequencing renumbers ids so later dispatches in the same burst carry
+  // stale ids. The first dispatch deletes the whole selection; this set marks
+  // the already-deleted ids so the redundant dispatches are ignored. Cleared
+  // in the layout effect below once the burst has committed.
+  const deletedTaskIdsRef = useRef<Set<string>>(new Set())
 
   useLayoutEffect(() => {
     calendarConfigRef.current = calendarConfig
     durationUnitRef.current = durationUnit
     tasksRef.current = tasks
+    linksRef.current = links
+    apiRef.current = api
     selectedTaskIdRef.current = selectedTaskId
     selectedTaskIdsRef.current = selectedTaskIds
-  }, [calendarConfig, durationUnit, tasks, selectedTaskId, selectedTaskIds])
+    deletedTaskIdsRef.current.clear()
+  }, [api, calendarConfig, durationUnit, tasks, links, selectedTaskId, selectedTaskIds])
 
   useLayoutEffect(() => {
     if (!api) return
@@ -95,7 +106,9 @@ export function useGanttProject() {
     }
     const anchorId = selectedTaskIdRef.current
     if (ev.range && anchorId !== null) {
-      const currentTasks = tasksRef.current
+      // The grid may sort/filter rows, so range math must run on the store's
+      // displayed order (`_tasks`), not the app's insertion-order array.
+      const currentTasks = apiRef.current?.getState()._tasks ?? tasksRef.current
       const anchorIndex = currentTasks.findIndex((task) => sameTaskId(task.id, anchorId))
       const targetIndex = currentTasks.findIndex((task) => sameTaskId(task.id, id))
       if (anchorIndex >= 0 && targetIndex >= 0) {
@@ -127,6 +140,7 @@ export function useGanttProject() {
     // Inject before publishing the API so the first controlled task refresh
     // observes the project calendar instead of SVAR's calendar-less default.
     injectSvarCalendar(apiInstance, calendarConfigRef.current, durationUnitRef.current)
+    apiRef.current = apiInstance
     setApi(apiInstance)
 
     // Route double-click/editor activation to the custom Task Info panel.
@@ -463,25 +477,52 @@ export function useGanttProject() {
 
   const handleDeleteTask = useCallback(
     ({ id }: { id: string | number }) => {
-      const idsToDelete = collectTaskSubtreeIds(tasks, id)
-      const remainingTasks = tasks.filter(
-        (task) => task.id === undefined || !idsToDelete.has(String(task.id))
-      )
-      const remainingLinks = links.filter(
-        (link) =>
-          !idsToDelete.has(String(link.source)) &&
-          !idsToDelete.has(String(link.target))
-      )
-      const resequenced = resequenceProject(remainingTasks, remainingLinks, selectedTaskId)
-      const scheduled = isAutoSchedule
-        ? autoScheduleTasks(resequenced.tasks, resequenced.links, calendarConfig, durationUnit)
-        : resequenced.tasks
-      setTasks(scheduled)
-      setLinks(resequenced.links)
-      setSelectedTaskId(resequenced.selectedTaskId)
-      setSelectedTaskIds(resequenced.selectedTaskId === null ? [] : [resequenced.selectedTaskId])
+      // SVAR fires `delete-task` once per selected task in a synchronous burst.
+      // The first dispatch deletes the union of every selected subtree; later
+      // dispatches carry ids that resequencing already renumbered away, so
+      // they are ignored via deletedTaskIdsRef.
+      if (deletedTaskIdsRef.current.has(String(id))) return
+
+      const selection = selectedTaskIdsRef.current
+      const isBatchDelete =
+        selection.length > 1 && selection.some((selectedId) => sameTaskId(selectedId, id))
+      const rootIds = isBatchDelete ? selection : [id]
+
+      // Compute the deletion set from the pre-delete snapshot so every
+      // selected subtree is collected before ids are resequenced.
+      const idsToDelete = new Set<string>()
+      for (const rootId of rootIds) {
+        for (const subtreeId of collectTaskSubtreeIds(tasksRef.current, rootId)) {
+          idsToDelete.add(subtreeId)
+        }
+      }
+      for (const deletedId of idsToDelete) {
+        deletedTaskIdsRef.current.add(deletedId)
+      }
+
+      // Functional updates: each dispatch in the burst must see the latest
+      // state, not the render-closure `tasks`/`links`.
+      let nextLinks: ILink[] | null = null
+      setTasks((prevTasks) => {
+        const remainingTasks = prevTasks.filter(
+          (task) => task.id === undefined || !idsToDelete.has(String(task.id))
+        )
+        const remainingLinks = linksRef.current.filter(
+          (link) =>
+            !idsToDelete.has(String(link.source)) &&
+            !idsToDelete.has(String(link.target))
+        )
+        const resequenced = resequenceProject(remainingTasks, remainingLinks, null)
+        nextLinks = resequenced.links
+        return isAutoSchedule
+          ? autoScheduleTasks(resequenced.tasks, resequenced.links, calendarConfig, durationUnit)
+          : resequenced.tasks
+      })
+      setLinks((prevLinks) => nextLinks ?? prevLinks)
+      setSelectedTaskId(null)
+      setSelectedTaskIds([])
     },
-    [calendarConfig, durationUnit, isAutoSchedule, links, selectedTaskId, tasks]
+    [calendarConfig, durationUnit, isAutoSchedule]
   )
 
   const handleAddLink = useCallback(

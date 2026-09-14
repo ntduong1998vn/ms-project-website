@@ -60,6 +60,19 @@ describe('computeCriticalPath', () => {
     expect(linkIds.has('1')).toBe(true)
     expect(linkIds.has('2')).toBe(false)
   })
+  it('does not mark a non-driving link between two critical tasks as critical', () => {
+    // a->b->c is the driving chain; a->c spans a 2-day gap so it carries float
+    const tasks = [task('a', 14, 16), task('b', 16, 18), task('c', 18, 20)]
+    const links = [link(1, 'a', 'b'), link(2, 'b', 'c'), link(3, 'a', 'c')]
+    const { taskIds, linkIds } = computeCriticalPath(tasks, links, calendar, 'day')
+
+    expect(taskIds.has('a')).toBe(true)
+    expect(taskIds.has('b')).toBe(true)
+    expect(taskIds.has('c')).toBe(true)
+    expect(linkIds.has('1')).toBe(true)
+    expect(linkIds.has('2')).toBe(true)
+    expect(linkIds.has('3')).toBe(false)
+  })
 
   it('marks a milestone at the end of the chain as critical', () => {
     const tasks = [task('a', 14, 16), { id: 'm', text: 'milestone', type: 'milestone', start: day(16), end: day(16), duration: 0 } as ITask]
@@ -114,43 +127,73 @@ describe('computeCriticalPath', () => {
   })
 
   it('handles a start-to-start dependency with zero gap as critical', () => {
-    const tasks = [task('a', 14, 16), task('b', 14, 16)]
+    // b starts with a but outlives it; only the s2s tie puts a on the critical
+    // path (an e2e/s2e reading of the gap would leave a with float)
+    const tasks = [task('a', 14, 16), task('b', 14, 18)]
     const links = [link(1, 'a', 'b', 's2s')]
     const { taskIds, linkIds } = computeCriticalPath(tasks, links, calendar, 'day')
 
     expect(taskIds.has('a')).toBe(true)
     expect(taskIds.has('b')).toBe(true)
     expect(linkIds.has('1')).toBe(true)
+
+    // Without the link, a finishes two days before the project does
+    const withoutLink = computeCriticalPath(tasks, [], calendar, 'day')
+    expect(withoutLink.taskIds.has('a')).toBe(false)
   })
 
   it('handles a finish-to-finish dependency with zero gap as critical', () => {
-    const tasks = [task('a', 14, 16), task('b', 14, 16)]
-    const links = [link(1, 'a', 'b', 'e2e')]
+    // b is critical through c; a finishes with b but two days before the
+    // project ends, so only the e2e tie puts a on the critical path
+    // (an s2e reading of the gap would leave a with float)
+    const tasks = [task('a', 15, 16), task('b', 14, 16), task('c', 16, 18)]
+    const links = [link(1, 'a', 'b', 'e2e'), link(2, 'b', 'c')]
     const { taskIds, linkIds } = computeCriticalPath(tasks, links, calendar, 'day')
 
     expect(taskIds.has('a')).toBe(true)
     expect(taskIds.has('b')).toBe(true)
+    expect(taskIds.has('c')).toBe(true)
     expect(linkIds.has('1')).toBe(true)
+    expect(linkIds.has('2')).toBe(true)
+
+    // Without the e2e link, a has two days of float
+    const withoutLink = computeCriticalPath(tasks, [link(2, 'b', 'c')], calendar, 'day')
+    expect(withoutLink.taskIds.has('a')).toBe(false)
   })
 
   it('handles a start-to-finish dependency with zero gap as critical', () => {
-    const tasks = [task('a', 14, 16), task('b', 14, 16)]
-    const links = [link(1, 'a', 'b', 's2e')]
+    // b ends exactly when a starts and is critical through c; only the s2e
+    // tie puts a on the critical path — every other link type reads a
+    // negative gap here, so removing the link is what must free a
+    const tasks = [task('a', 14, 16), task('b', 13, 14), task('c', 14, 18)]
+    const links = [link(1, 'a', 'b', 's2e'), link(2, 'b', 'c')]
+    const { taskIds, linkIds } = computeCriticalPath(tasks, links, calendar, 'day')
+
+    expect(taskIds.has('a')).toBe(true)
+    expect(taskIds.has('b')).toBe(true)
+    expect(taskIds.has('c')).toBe(true)
+    expect(linkIds.has('1')).toBe(true)
+    expect(linkIds.has('2')).toBe(true)
+
+    // Without the s2e link, a has two days of float
+    const withoutLink = computeCriticalPath(tasks, [link(2, 'b', 'c')], calendar, 'day')
+    expect(withoutLink.taskIds.has('a')).toBe(false)
+  })
+
+  it('applies lag by shortening the slack on the driving path', () => {
+    // b starts one working day after a ends; lag 1 consumes that gap so the
+    // link is tight and a is critical — with zero lag a keeps a day of float
+    const tasks = [task('a', 14, 16), task('b', 17, 19)]
+    const links = [link(1, 'a', 'b', 'e2s', 1)]
     const { taskIds, linkIds } = computeCriticalPath(tasks, links, calendar, 'day')
 
     expect(taskIds.has('a')).toBe(true)
     expect(taskIds.has('b')).toBe(true)
     expect(linkIds.has('1')).toBe(true)
-  })
 
-  it('applies lag by shortening the slack on the driving path', () => {
-    // a 14-16, b 16-18, a->b with 2 days lag makes a late for b (slack 0)
-    const tasks = [task('a', 14, 16), task('b', 16, 18)]
-    const links = [link(1, 'a', 'b', 'e2s', 2)]
-    const { taskIds } = computeCriticalPath(tasks, links, calendar, 'day')
-
-    expect(taskIds.has('a')).toBe(true)
-    expect(taskIds.has('b')).toBe(true)
+    const noLag = computeCriticalPath(tasks, [link(1, 'a', 'b', 'e2s')], calendar, 'day')
+    expect(noLag.taskIds.has('a')).toBe(false)
+    expect(noLag.linkIds.size).toBe(0)
   })
 
   it('shares slack via cache when two branches merge into one successor', () => {

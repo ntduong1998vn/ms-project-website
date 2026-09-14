@@ -176,6 +176,13 @@ describe('dependency chain helpers', () => {
     ])
   })
 
+  it('rejects cycles formed by links added earlier in the same chain', () => {
+    // Selection ['a', 'b', 'a']: a→b is added first, then b→a would cycle.
+    expect(buildDependencyChain(['a', 'b', 'a'], [], 1)).toEqual([
+      { id: 1, source: 'a', target: 'b', type: 'e2s' },
+    ])
+  })
+
   it('detects direct and transitive dependency cycles', () => {
     const links: ILink[] = [
       { id: 1, source: 1, target: 2, type: 'e2s' } as ILink,

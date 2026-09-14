@@ -50,6 +50,7 @@ function calculateSlack(
   taskMap: Map<string, ITask>,
   outgoing: Map<string, ILink[]>,
   slackCache: Map<string, number>,
+  drivingLinks: Map<string, ILink[]>,
   inStack: Set<string>,
   projectFinish: Date,
   calendar: ProjectCalendarConfig,
@@ -74,6 +75,7 @@ function calculateSlack(
 
   const terminalSlack = signedWorkingDuration(task.end, projectFinish, calendar, durationUnit)
   let minSlack = terminalSlack
+  const candidates: Array<{ link: ILink; slack: number }> = []
 
   for (const link of outgoing.get(taskId) ?? []) {
     const targetId = keyId(link.target)
@@ -89,6 +91,7 @@ function calculateSlack(
       taskMap,
       outgoing,
       slackCache,
+      drivingLinks,
       inStack,
       projectFinish,
       calendar,
@@ -96,7 +99,23 @@ function calculateSlack(
     )
 
     if (succSlack !== Number.POSITIVE_INFINITY) {
-      minSlack = Math.min(minSlack, succSlack + gap - lag)
+      const linkSlack = succSlack + gap - lag
+      candidates.push({ link, slack: linkSlack })
+      minSlack = Math.min(minSlack, linkSlack)
+    }
+  }
+
+  // A link is driving when its path realizes the task's minimum slack —
+  // i.e. the link is tight (zero effective float), not just connecting
+  // two tasks that happen to be critical.
+  for (const { link, slack } of candidates) {
+    if (slack === minSlack) {
+      const list = drivingLinks.get(taskId)
+      if (list) {
+        list.push(link)
+      } else {
+        drivingLinks.set(taskId, [link])
+      }
     }
   }
 
@@ -151,13 +170,14 @@ export function computeCriticalPath(
   }
 
   const slackCache = new Map<string, number>()
+  const drivingLinks = new Map<string, ILink[]>()
   const taskIds = new Set<string>()
 
   for (const [id, task] of schedulable) {
     if (task.progress === 100) {
       continue
     }
-    const slack = calculateSlack(id, schedulable, outgoing, slackCache, new Set<string>(), projectFinish, calendar, durationUnit)
+    const slack = calculateSlack(id, schedulable, outgoing, slackCache, drivingLinks, new Set<string>(), projectFinish, calendar, durationUnit)
     if (slack <= 0) {
       taskIds.add(id)
     }
@@ -175,11 +195,13 @@ export function computeCriticalPath(
   }
 
   const linkIds = new Set<string>()
-  for (const link of links) {
-    const sid = keyId(link.source)
-    const tid = keyId(link.target)
-    if (sid && tid && taskIds.has(sid) && taskIds.has(tid)) {
-      linkIds.add(link.id !== undefined ? String(link.id) : `${sid}->${tid}`)
+  for (const [sourceId, links] of drivingLinks) {
+    if (!taskIds.has(sourceId)) continue
+    for (const link of links) {
+      const targetId = keyId(link.target)
+      if (targetId && taskIds.has(targetId)) {
+        linkIds.add(link.id !== undefined ? String(link.id) : `${sourceId}->${targetId}`)
+      }
     }
   }
 

@@ -133,29 +133,30 @@ test('Add Task → Indent → Outdent cycle keeps the page functional', async ({
 
 test('multi-select + Link Tasks sets predecessors, Unlink Tasks clears them', async ({ page }) => {
   const reqRow = rowByName(page, 'Requirements Gathering')
-  const protoRow = rowByName(page, 'UI/UX Prototyping')
+  const archRow = rowByName(page, 'Architecture & DB Design')
   await expect(reqRow).toBeVisible()
-  await expect(protoRow).toBeVisible()
+  await expect(archRow).toBeVisible()
 
   // Plain click selects; Ctrl/Cmd+click toggles an additional selection.
   await cell(reqRow, 'text').click()
-  await cell(protoRow, 'text').click({ modifiers: ['ControlOrMeta'] })
+  await cell(archRow, 'text').click({ modifiers: ['ControlOrMeta'] })
   await expect(reqRow).toHaveClass(SELECTED_CLASS)
-  await expect(protoRow).toHaveClass(SELECTED_CLASS)
+  await expect(archRow).toHaveClass(SELECTED_CLASS)
 
   const linkTasks = ribbonButton(page, 'Link Tasks')
   await expect(linkTasks).toBeEnabled()
   await linkTasks.click()
 
-  // Selection order is 2 → 3, so task 3 gains predecessor "2".
-  await expect(cell(protoRow, 'predecessors')).toContainText('2')
+  // Selection order is 2 → 4, so task 4 gains predecessor "2".
+  // Tasks 2 and 4 have no pre-existing link, so Link must actually create it.
+  await expect(cell(archRow, 'predecessors')).toContainText('2')
 
   const unlinkTasks = ribbonButton(page, 'Unlink Tasks')
   await expect(unlinkTasks).toBeEnabled()
   await unlinkTasks.click()
 
-  await expect(cell(protoRow, 'predecessors')).not.toContainText('2')
-  await expect(cell(protoRow, 'predecessors')).toContainText('-')
+  await expect(cell(archRow, 'predecessors')).not.toContainText('2')
+  await expect(cell(archRow, 'predecessors')).toContainText('-')
 })
 
 test('Delete Task removes the selected row', async ({ page }) => {

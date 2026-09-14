@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { Gantt, Willow } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
 import { CsvImportDialog } from '@/components/csv-import-dialog'
@@ -54,6 +55,14 @@ export function GanttPage() {
     displayTasks,
     displayLinks,
   } = derived
+  const { handleTaskSelection } = actions
+  const handleColumnSelectTask = useCallback(
+    (id: string | number) => {
+      handleTaskSelection({ id })
+    },
+    [handleTaskSelection]
+  )
+
   const columns = useGanttColumns({
     tasks,
     links,
@@ -63,10 +72,7 @@ export function GanttPage() {
     isWorkColumnVisible,
     selectedTaskId,
     ganttApi: gantt.api,
-    onSelectTask: (id) => {
-      setSelectedTaskId(id)
-      setSelectedTaskIds([id])
-    },
+    onSelectTask: handleColumnSelectTask,
     onDurationChange: actions.handleDurationChange,
     onStartDateChange: actions.handleStartDateChange,
     onFinishDateChange: actions.handleFinishDateChange,
@@ -167,7 +173,6 @@ export function GanttPage() {
             <Willow>
               <Gantt
                 init={actions.handleInit}
-                key={showCriticalPath ? 'critical' : 'normal'}
                 displayMode={isGanttVisible ? 'all' : 'grid'}
                 tasks={gantt.api ? displayTasks : []}
                 links={displayLinks}

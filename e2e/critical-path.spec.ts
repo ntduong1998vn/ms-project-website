@@ -19,7 +19,7 @@ test('Critical Path toggle highlights and un-highlights critical task bars', asy
   await expect(criticalBars).toHaveCount(0)
 
   await ribbonButton(page, 'Critical Path').click()
-  expect(await criticalBars.count()).toBeGreaterThan(0)
+  await expect(criticalBars).not.toHaveCount(0)
 
   await ribbonButton(page, 'Critical Path').click()
   await expect(criticalBars).toHaveCount(0)
