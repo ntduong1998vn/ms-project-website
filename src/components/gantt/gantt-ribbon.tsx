@@ -248,7 +248,7 @@ export function GanttRibbon({
                 </button>
               ))}
             </div>
-            {viewMode === 'gantt' && (<>)
+            {viewMode === 'gantt' && (<>
               <button
                 type="button"
                 onClick={onToggleGanttVisibility}

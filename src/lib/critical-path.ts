@@ -8,6 +8,18 @@ function keyId(id: string | number | undefined): string | undefined {
   return id !== undefined ? String(id) : undefined
 }
 
+function signedWorkingDuration(
+  start: Date,
+  end: Date,
+  calendar: ProjectCalendarConfig,
+  durationUnit: 'day' | 'hour'
+): number {
+  if (end <= start) {
+    return -calculateTaskDuration(end, start, calendar, durationUnit)
+  }
+  return calculateTaskDuration(start, end, calendar, durationUnit)
+}
+
 function gapForLink(
   link: ILink,
   pred: ITask,
@@ -22,14 +34,14 @@ function gapForLink(
 
   switch (link.type) {
     case 's2s':
-      return calculateTaskDuration(start, sStart, calendar, durationUnit)
+      return signedWorkingDuration(start, sStart, calendar, durationUnit)
     case 'e2e':
-      return calculateTaskDuration(end, sEnd, calendar, durationUnit)
+      return signedWorkingDuration(end, sEnd, calendar, durationUnit)
     case 's2e':
-      return calculateTaskDuration(start, sEnd, calendar, durationUnit)
+      return signedWorkingDuration(start, sEnd, calendar, durationUnit)
     case 'e2s':
     default:
-      return calculateTaskDuration(end, sStart, calendar, durationUnit)
+      return signedWorkingDuration(end, sStart, calendar, durationUnit)
   }
 }
 
@@ -60,7 +72,7 @@ function calculateSlack(
 
   inStack.add(taskId)
 
-  const terminalSlack = calculateTaskDuration(task.end, projectFinish, calendar, durationUnit)
+  const terminalSlack = signedWorkingDuration(task.end, projectFinish, calendar, durationUnit)
   let minSlack = terminalSlack
 
   for (const link of outgoing.get(taskId) ?? []) {
@@ -100,15 +112,18 @@ export function computeCriticalPath(
   durationUnit: 'day' | 'hour'
 ): CriticalPathResult {
   const schedulable = new Map<string, ITask>()
-  const summaries: ITask[] = []
+  const parentMap = new Map<string, string>()
   let projectFinish = new Date(0)
 
   for (const task of tasks) {
     if (task.id === undefined) continue
     const id = String(task.id)
 
+    if (task.parent !== undefined) {
+      parentMap.set(id, String(task.parent))
+    }
+
     if (task.type === 'summary') {
-      summaries.push(task)
       continue
     }
 
@@ -148,33 +163,16 @@ export function computeCriticalPath(
     }
   }
 
-  // Summary tasks are critical if any of their descendants is critical
-  const parentToChildren = new Map<string, string[]>()
-  for (const [id, task] of schedulable) {
-    if (task.parent !== undefined) {
-      const parentId = String(task.parent)
-      if (!parentToChildren.has(parentId)) {
-        parentToChildren.set(parentId, [])
-      }
-      parentToChildren.get(parentId)!.push(id)
+  // Mark all ancestor summaries (and any ancestor) of critical tasks
+  for (const id of taskIds) {
+    let current = id
+    while (current) {
+      const parentId = parentMap.get(current)
+      if (!parentId) break
+      taskIds.add(parentId)
+      current = parentId
     }
   }
-
-  function markSummaries(parentIds: string[], seen: Set<string>) {
-    for (const parentId of parentIds) {
-      if (seen.has(parentId)) continue
-      seen.add(parentId)
-      const children = parentToChildren.get(parentId) ?? []
-      const hasCriticalChild = children.some((childId) => taskIds.has(childId))
-      if (hasCriticalChild) {
-        taskIds.add(parentId)
-      }
-      markSummaries(children, seen)
-    }
-  }
-
-  const allParentIds = Array.from(parentToChildren.keys())
-  markSummaries(allParentIds, new Set<string>())
 
   const linkIds = new Set<string>()
   for (const link of links) {
