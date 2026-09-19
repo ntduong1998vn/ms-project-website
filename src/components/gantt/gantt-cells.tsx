@@ -5,6 +5,7 @@ import { Plus, TriangleAlert } from 'lucide-react'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 import { exclusiveEndToInclusiveFinish } from '@/lib/scheduler'
 import type { ResourceEffortWarning } from '@/lib/resource-effort'
+import { DatePicker } from '@/components/ui/date-picker'
 
 function formatDate(date: Date | string | undefined | null): string {
   if (!date) return ''
@@ -252,23 +253,6 @@ export function AddTaskCell({ row }: { row: TaskWithResources }) {
   )
 }
 
-function toDateInputValue(date: Date | string | undefined | null): string {
-  if (!date) return ''
-  const d = new Date(date)
-  if (isNaN(d.getTime())) return ''
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function parseDateInput(val: string): Date | null {
-  if (!val) return null
-  const [y, m, d] = val.split('-').map(Number)
-  if (!y || !m || !d) return null
-  return new Date(y, m - 1, d)
-}
-
 export function DurationCell({
   row,
   onDurationChange,
@@ -374,7 +358,6 @@ export function StartDateCell({
 }) {
   const isSummary = row.type === 'summary'
   const dateStr = formatDate(row.start)
-  const inputVal = toDateInputValue(row.start)
 
   if (isSummary) {
     return <span className="text-xs font-semibold text-foreground/80 tabular-nums px-1">{dateStr}</span>
@@ -382,24 +365,11 @@ export function StartDateCell({
 
   return (
     <div className="group relative flex items-center justify-center w-full h-full px-0.5" onClick={() => onSelect?.(row.id)}>
-      <input
-        type="date"
-        value={inputVal}
-        onClick={(e) => {
-          e.stopPropagation()
-          onSelect?.(row.id)
-          try {
-            e.currentTarget.showPicker?.()
-          } catch {
-            // fallback
-          }
-        }}
-        onChange={(e) => {
-          const parsed = parseDateInput(e.target.value)
-          if (parsed) onDateChange(row.id, parsed)
-        }}
-        aria-label={`Start date for task ${row.text}`}
-        className="w-full text-center text-xs font-medium text-foreground bg-transparent border border-transparent hover:border-border hover:bg-muted/40 focus:border-primary focus:bg-background rounded px-1 py-0.5 cursor-pointer outline-none transition-colors tabular-nums"
+      <DatePicker
+        value={row.start}
+        onChange={(d) => onDateChange(row.id, d)}
+        onOpen={() => onSelect?.(row.id)}
+        ariaLabel={`Start date for task ${row.text}`}
       />
     </div>
   )
@@ -423,35 +393,22 @@ export function FinishDateCell({
       ? exclusiveEndToInclusiveFinish(new Date(row.end))
       : null
   const dateStr = formatDate(inclusiveFinish)
-  const inputVal = toDateInputValue(inclusiveFinish)
+
   if (isSummary) {
     return <span className="text-xs font-semibold text-foreground/80 tabular-nums px-1">{dateStr}</span>
   }
 
   return (
     <div className="group relative flex items-center justify-center w-full h-full px-0.5" onClick={() => onSelect?.(row.id)}>
-      <input
-        type="date"
-        value={inputVal}
-        onClick={(e) => {
-          e.stopPropagation()
-          onSelect?.(row.id)
-          try {
-            e.currentTarget.showPicker?.()
-          } catch {
-            // fallback
-          }
+      <DatePicker
+        value={inclusiveFinish}
+        onChange={(d) => {
+          // d is the inclusive finish the user chose; pass it as-is.
+          // handleFinishDateChange converts it to exclusive via inclusiveFinishToExclusiveEnd.
+          onDateChange(row.id, d)
         }}
-        onChange={(e) => {
-          const parsed = parseDateInput(e.target.value)
-          if (parsed) {
-            // parsed is the inclusive finish the user chose; pass it as-is.
-            // handleFinishDateChange converts it to exclusive via inclusiveFinishToExclusiveEnd.
-            onDateChange(row.id, parsed)
-          }
-        }}
-        aria-label={`Finish date for task ${row.text}`}
-        className="w-full text-center text-xs font-medium text-foreground bg-transparent border border-transparent hover:border-border hover:bg-muted/40 focus:border-primary focus:bg-background rounded px-1 py-0.5 cursor-pointer outline-none transition-colors tabular-nums"
+        onOpen={() => onSelect?.(row.id)}
+        ariaLabel={`Finish date for task ${row.text}`}
       />
     </div>
   )
