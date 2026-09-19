@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ILink, ITask } from '@svar-ui/react-gantt'
 import { Trash2, X } from 'lucide-react'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
@@ -42,7 +42,22 @@ export function TaskInfoPanel({
   const [newPredecessorType, setNewPredecessorType] = useState<DependencyType>('e2s')
   const taskId = task.id
   const taskResources = new Set((task as TaskWithResources).resources ?? [])
-
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      const target = event.target as HTMLElement | null
+      if (
+        target?.closest?.(
+          'input, textarea, select, [contenteditable], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]'
+        )
+      ) {
+        return
+      }
+      onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
   if (taskId === undefined) return null
 
@@ -69,7 +84,7 @@ export function TaskInfoPanel({
     <aside
       aria-label="Task information"
       data-panel="task-info"
-      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border bg-card"
+      className="absolute inset-y-0 right-0 z-30 flex w-[320px] flex-col border-l border-border bg-card shadow-2xl animate-in slide-in-from-right duration-200"
     >
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>

@@ -223,7 +223,7 @@ export function GanttPage() {
           onTimescaleChange={(timescale) => setZoom(timescale)}
         />
       ) : (
-        <div className="flex h-full min-h-0 w-full">
+        <div className="relative flex h-full min-h-0 w-full">
           <div className="min-w-0 flex-1">
             <Willow>
               <Gantt
