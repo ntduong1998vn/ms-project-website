@@ -31,6 +31,7 @@ export function GanttPage() {
     isColumnChooserOpen,
     setIsColumnChooserOpen,
     isWorkColumnVisible,
+    visibleRemoteColumns,
     isGanttVisible,
     showCriticalPath,
     viewMode,
@@ -76,6 +77,11 @@ export function GanttPage() {
     [handleTaskSelection]
   )
 
+  const mappedRemoteKeys = new Set(
+    Object.values(integrationSettings.mapping.fields).filter((k): k is string => k !== null)
+  )
+  const remoteColumnFields = integrationSettings.knownFields.filter((f) => !mappedRemoteKeys.has(f.key))
+
   const columns = useGanttColumns({
     tasks,
     links,
@@ -83,6 +89,8 @@ export function GanttPage() {
     calendarConfig,
     durationUnit,
     isWorkColumnVisible,
+    visibleRemoteColumns,
+    remoteFields: remoteColumnFields,
     selectedTaskId,
     ganttApi: gantt.api,
     onSelectTask: handleColumnSelectTask,
@@ -287,6 +295,9 @@ export function GanttPage() {
         workVisible={isWorkColumnVisible}
         onOpenChange={setIsColumnChooserOpen}
         onAddWork={actions.handleAddWorkColumn}
+        remoteFields={remoteColumnFields}
+        visibleRemoteColumns={visibleRemoteColumns}
+        onAddRemoteField={actions.handleAddRemoteColumn}
       />
     </AppLayout>
   )

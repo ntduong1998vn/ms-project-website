@@ -168,17 +168,43 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
         .catch(() => null as RedmineCustomField[] | null),
     ])
 
+    // flattenRedmineIssue stores the NAME for tracker/status/priority and
+    // assigned_to/author, so option ids are names there; user-format custom
+    // fields store the Redmine user id as a string.
+    const memberNameOptions = members.map((m) => ({ id: m.name, label: m.name }))
+    const memberIdOptions = members.map((m) => ({ id: String(m.id), label: m.name }))
+    const standardOptions: Record<
+      string,
+      Array<{ id: string | number; label: string }> | undefined
+    > = {
+      tracker: trackers.map((t) => ({ id: t.name, label: t.name })),
+      status: statuses.map((s) => ({ id: s.name, label: s.name })),
+      priority: priorities.map((p) => ({ id: p.name, label: p.name })),
+      assigned_to: memberNameOptions,
+      author: memberNameOptions,
+    }
+
     const cfDescriptors =
       customFields !== null
-        ? customFields.map(
-            (cf): RemoteFieldDescriptor => ({
+        ? customFields.map((cf): RemoteFieldDescriptor => {
+            const options =
+              cf.field_format === 'user'
+                ? memberIdOptions
+                : cf.field_format === 'version' // no version list is fetched
+                  ? undefined
+                  : cf.possible_values?.map((pv) => ({
+                      id: pv.value,
+                      label: pv.label ?? pv.value,
+                    }))
+            return {
               key: `cf_${cf.id}`,
               label: `${cf.name} (custom)`,
               kind: 'custom',
               valueType: 'string',
               multiple: cf.multiple === true || cf.multiple === '1',
-            })
-          )
+              options,
+            }
+          })
         : await harvestCustomFieldDescriptors()
 
     return {
@@ -186,7 +212,13 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
       members,
       statuses: statuses.map((s) => ({ id: s.id, name: s.name })),
       priorities: priorities.map((p) => ({ id: p.id, name: p.name })),
-      fields: [...redmineStandardFields, ...cfDescriptors],
+      fields: [
+        ...redmineStandardFields.map((field) => ({
+          ...field,
+          options: standardOptions[field.key],
+        })),
+        ...cfDescriptors,
+      ],
     }
   }
 

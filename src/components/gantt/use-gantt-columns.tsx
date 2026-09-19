@@ -18,6 +18,7 @@ import { sameTaskId } from '@/lib/task-helpers'
 import { collectDistinctOptions, taskTextFilter, workHours } from '@/lib/gantt-filters'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
+import type { RemoteFieldDescriptor } from '@/lib/integrations/types'
 
 export type UseGanttColumnsOptions = {
   tasks: ITask[]
@@ -26,6 +27,8 @@ export type UseGanttColumnsOptions = {
   calendarConfig: ProjectCalendarConfig
   durationUnit: 'day' | 'hour'
   isWorkColumnVisible: boolean
+  visibleRemoteColumns: string[]
+  remoteFields: RemoteFieldDescriptor[]
   selectedTaskId: string | number | null
   ganttApi: IApi | null
   onSelectTask: (id: string | number) => void
@@ -43,6 +46,8 @@ export function useGanttColumns({
   calendarConfig,
   durationUnit,
   isWorkColumnVisible,
+  visibleRemoteColumns,
+  remoteFields,
   selectedTaskId,
   ganttApi,
   onSelectTask,
@@ -269,6 +274,41 @@ export function useGanttColumns({
         })
       }
 
+      const remoteColumns: IColumnConfig[] = visibleRemoteColumns
+        .map((key) => remoteFields.find((field) => field.key === key))
+        .filter((field): field is RemoteFieldDescriptor => field !== undefined)
+        .map((field) => {
+          const options = field.options
+          return {
+            id: field.key,
+            header: headerCell(field.label, { sortable: true }),
+            width: 110,
+            align: 'center' as const,
+            sort: true,
+            // Enumerated fields get a dropdown editor. Options must live in
+            // editor.config.options, NOT column.options: grid-store builds an
+            // optionsMap from column.options and maps the getter result through
+            // it for display, which would blank cells since our getter already
+            // returns the label.
+            editor: options?.length
+              ? { type: 'richselect' as const, config: { options } }
+              : ('text' as const),
+            getter: (task: ITask) => {
+              const raw = (task as Record<string, unknown>)[field.key] as
+                | string
+                | number
+                | undefined
+              if (!options?.length || raw == null) return raw
+              const match = options.find((o) => String(o.id) === String(raw))
+              return match?.label ?? raw
+            },
+          }
+        })
+      if (remoteColumns.length > 0) {
+        const addTaskIndex = columns.findIndex((column) => column.id === 'add-task')
+        columns.splice(addTaskIndex === -1 ? columns.length : addTaskIndex, 0, ...remoteColumns)
+      }
+
       return columns
     },
     [
@@ -287,6 +327,8 @@ export function useGanttColumns({
       selectedTaskId,
       tasks,
       warningsByTask,
+      remoteFields,
+      visibleRemoteColumns,
     ]
   )
 }

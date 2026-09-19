@@ -15,7 +15,7 @@ import { createProvider } from '@/lib/integrations'
 import { loadIntegrationSettings, saveIntegrationSettings } from '@/lib/integrations/settings'
 import { applyRemoteIssues, linkedTasks, unlinkedTasks } from '@/lib/integrations/sync'
 import { redmineStandardFields } from '@/lib/integrations/redmine/fields'
-import type { IntegrationSettings, PushContext, RemoteProjectMetadata } from '@/lib/integrations/types'
+import type { IntegrationSettings, PushContext, RemoteFieldDescriptor, RemoteProjectMetadata } from '@/lib/integrations/types'
 import { toast } from 'sonner'
 
 type TaskPlacementMode = 'before' | 'after' | 'child' | 'up' | 'down'
@@ -78,6 +78,7 @@ export function useGanttProject() {
   const [clipboardImportData, setClipboardImportData] = useState<CsvImportData | null>(null)
   const [isColumnChooserOpen, setIsColumnChooserOpen] = useState<boolean>(false)
   const [isWorkColumnVisible, setIsWorkColumnVisible] = useState<boolean>(false)
+  const [visibleRemoteColumns, setVisibleRemoteColumns] = useState<string[]>([])
   const [integrationSettings, setIntegrationSettings] = useState<IntegrationSettings>(loadIntegrationSettings)
   const [isIntegrationDialogOpen, setIsIntegrationDialogOpen] = useState(false)
   const [isRedmineGetDialogOpen, setIsRedmineGetDialogOpen] = useState(false)
@@ -1159,6 +1160,20 @@ export function useGanttProject() {
     setIsColumnChooserOpen(false)
   }, [])
 
+  const handleAddRemoteColumn = useCallback((field: RemoteFieldDescriptor) => {
+    setVisibleRemoteColumns((prev) => (prev.includes(field.key) ? prev : [...prev, field.key]))
+    // Ensure the remote key is copied onto tasks on the next Get.
+    setIntegrationSettings((prev) => {
+      if (prev.mapping.extraFields.includes(field.key)) return prev
+      const next: IntegrationSettings = {
+        ...prev,
+        mapping: { ...prev.mapping, extraFields: [...prev.mapping.extraFields, field.key] },
+      }
+      saveIntegrationSettings(next)
+      return next
+    })
+  }, [])
+
   // Integration: upsert fetched Redmine members into the resource list.
   const upsertRedmineMembers = useCallback((members: Array<{ id: number; name: string }>) => {
     setResourceList((current) => mergeRedmineMembers(current, members))
@@ -1434,9 +1449,9 @@ export function useGanttProject() {
       : tasks.filter((task) => task.id !== undefined && pendingDeleteIds.has(String(task.id)))
 
   return {
-    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, integrationSettings, setIntegrationSettings, isIntegrationDialogOpen, setIsIntegrationDialogOpen, isRedmineGetDialogOpen, setIsRedmineGetDialogOpen, integrationBusy, lastSyncAt, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, pendingDeleteIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
+    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, visibleRemoteColumns, setVisibleRemoteColumns, integrationSettings, setIntegrationSettings, isIntegrationDialogOpen, setIsIntegrationDialogOpen, isRedmineGetDialogOpen, setIsRedmineGetDialogOpen, integrationBusy, lastSyncAt, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, pendingDeleteIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
     derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink, pendingDeleteTasks, displayTasks, displayLinks },
-    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleRequestDeleteSelectedTasks, handleConfirmDeleteTasks, handleCancelDeleteTasks, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn, handleSaveIntegrationSettings, handleTestIntegrationConnection, handleFetchIntegrationMetadata, handleRedmineGet, handleRedmineGetClear, handleRedmineGetUpsert, handleRedminePushNew, handleRedmineSync, handleRedmineFetchMetadata },
+    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleRequestDeleteSelectedTasks, handleConfirmDeleteTasks, handleCancelDeleteTasks, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn, handleAddRemoteColumn, handleSaveIntegrationSettings, handleTestIntegrationConnection, handleFetchIntegrationMetadata, handleRedmineGet, handleRedmineGetClear, handleRedmineGetUpsert, handleRedminePushNew, handleRedmineSync, handleRedmineFetchMetadata },
     gantt: { api, ganttResources, scalePresets },
     fileInputRef,
   }

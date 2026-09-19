@@ -15,6 +15,9 @@ export type RemoteFieldDescriptor = {
   kind: 'standard' | 'custom'
   valueType: RemoteFieldValueType
   multiple?: boolean   // true for multi-value custom fields — push writes value arrays
+  // Option list for enumerated remote fields; `id` is the value stored on the
+  // task, `label` is what the UI shows.
+  options?: Array<{ id: string | number; label: string }>
 }
 
 /** Normalized remote issue. Value conventions (provider MUST normalize):
