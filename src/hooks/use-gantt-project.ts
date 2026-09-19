@@ -84,7 +84,6 @@ export function useGanttProject() {
   const [isRedmineGetDialogOpen, setIsRedmineGetDialogOpen] = useState(false)
   const [integrationBusy, setIntegrationBusy] = useState<'get' | 'push' | 'sync' | 'meta' | null>(null)
   const busyRef = useRef(false) // re-entrancy guard — state captured in useCallback is stale for fast double-clicks
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<RibbonTab>('task')
   const [selectedTaskId, setSelectedTaskId] = useState<string | number | null>(null)
   const [selectedTaskIds, setSelectedTaskIds] = useState<(string | number)[]>([])
@@ -1255,7 +1254,6 @@ export function useGanttProject() {
       setLinks(result.links)
       setSelectedTaskId(null)
       setSelectedTaskIds([])
-      setLastSyncAt(new Date().toLocaleString())
       toast.success(`Redmine get complete: ${result.inserted} inserted, ${result.updated} updated.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -1322,7 +1320,6 @@ export function useGanttProject() {
             : task
         )
       )
-      setLastSyncAt(new Date().toLocaleString())
       toast.success(`Redmine push complete: ${pushed.size} issue(s) created.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -1361,7 +1358,6 @@ export function useGanttProject() {
       const failures = results.filter(
         (result): result is PromiseRejectedResult => result.status === 'rejected'
       )
-      if (updated >= 1) setLastSyncAt(new Date().toLocaleString())
       const firstError = failures[0]?.reason
       const syncMessage =
         `Sync complete: ${updated} updated, ${failures.length} failed.` +
@@ -1449,7 +1445,7 @@ export function useGanttProject() {
       : tasks.filter((task) => task.id !== undefined && pendingDeleteIds.has(String(task.id)))
 
   return {
-    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, visibleRemoteColumns, setVisibleRemoteColumns, integrationSettings, setIntegrationSettings, isIntegrationDialogOpen, setIsIntegrationDialogOpen, isRedmineGetDialogOpen, setIsRedmineGetDialogOpen, integrationBusy, lastSyncAt, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, pendingDeleteIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
+    state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, visibleRemoteColumns, setVisibleRemoteColumns, integrationSettings, setIntegrationSettings, isIntegrationDialogOpen, setIsIntegrationDialogOpen, isRedmineGetDialogOpen, setIsRedmineGetDialogOpen, integrationBusy, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, pendingDeleteIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
     derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink, pendingDeleteTasks, displayTasks, displayLinks },
     actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleRequestDeleteSelectedTasks, handleConfirmDeleteTasks, handleCancelDeleteTasks, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn, handleAddRemoteColumn, handleSaveIntegrationSettings, handleTestIntegrationConnection, handleFetchIntegrationMetadata, handleRedmineGet, handleRedmineGetClear, handleRedmineGetUpsert, handleRedminePushNew, handleRedmineSync, handleRedmineFetchMetadata },
     gantt: { api, ganttResources, scalePresets },

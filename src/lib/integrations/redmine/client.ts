@@ -199,6 +199,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
             return {
               key: `cf_${cf.id}`,
               label: `${cf.name} (custom)`,
+              description: cf.description,
               kind: 'custom',
               valueType: 'string',
               multiple: cf.multiple === true || cf.multiple === '1',

@@ -15,21 +15,21 @@ import type { RedmineIssue } from '@/lib/integrations/redmine/types'
  * Read keys are the flattened RemoteIssue keys produced by flattenRedmineIssue.
  */
 export const redmineStandardFields: RemoteFieldDescriptor[] = [
-  { key: 'subject', label: 'Subject', kind: 'standard', valueType: 'string' },
-  { key: 'description', label: 'Description', kind: 'standard', valueType: 'string' },
-  { key: 'start_date', label: 'Start Date', kind: 'standard', valueType: 'date' },
-  { key: 'due_date', label: 'Due Date', kind: 'standard', valueType: 'date' },
-  { key: 'done_ratio', label: 'Done Ratio %', kind: 'standard', valueType: 'progress' },
-  { key: 'estimated_hours', label: 'Estimated Hours', kind: 'standard', valueType: 'hours' },
-  { key: 'parent_id', label: 'Parent Issue', kind: 'standard', valueType: 'issue-ref' },
-  { key: 'assigned_to', label: 'Assignee', kind: 'standard', valueType: 'user' },
-  { key: 'assigned_to_id', label: 'Assignee ID', kind: 'standard', valueType: 'number' },
-  { key: 'tracker', label: 'Tracker', kind: 'standard', valueType: 'string' },
-  { key: 'status', label: 'Status', kind: 'standard', valueType: 'string' },
-  { key: 'priority', label: 'Priority', kind: 'standard', valueType: 'string' },
-  { key: 'author', label: 'Author', kind: 'standard', valueType: 'string' },
-  { key: 'fixed_version', label: 'Target Version', kind: 'standard', valueType: 'string' },
-  { key: 'successors', label: 'Successors', kind: 'standard', valueType: 'relations' },
+  { key: 'subject', label: 'Subject', kind: 'standard', valueType: 'string', description: 'Issue subject' },
+  { key: 'description', label: 'Description', kind: 'standard', valueType: 'string', description: 'Issue description' },
+  { key: 'start_date', label: 'Start Date', kind: 'standard', valueType: 'date', description: 'Issue start date' },
+  { key: 'due_date', label: 'Due Date', kind: 'standard', valueType: 'date', description: 'Issue due date' },
+  { key: 'done_ratio', label: 'Done Ratio %', kind: 'standard', valueType: 'progress', description: 'Completion percentage' },
+  { key: 'estimated_hours', label: 'Estimated Hours', kind: 'standard', valueType: 'hours', description: 'Estimated effort in hours' },
+  { key: 'parent_id', label: 'Parent Issue', kind: 'standard', valueType: 'issue-ref', description: 'Parent issue id' },
+  { key: 'assigned_to', label: 'Assignee', kind: 'standard', valueType: 'user', description: 'Assignee name' },
+  { key: 'assigned_to_id', label: 'Assignee ID', kind: 'standard', valueType: 'number', description: 'Assignee user id' },
+  { key: 'tracker', label: 'Tracker', kind: 'standard', valueType: 'string', description: 'Issue tracker' },
+  { key: 'status', label: 'Status', kind: 'standard', valueType: 'string', description: 'Issue status' },
+  { key: 'priority', label: 'Priority', kind: 'standard', valueType: 'string', description: 'Issue priority' },
+  { key: 'author', label: 'Author', kind: 'standard', valueType: 'string', description: 'Issue author' },
+  { key: 'fixed_version', label: 'Target Version', kind: 'standard', valueType: 'string', description: 'Target version' },
+  { key: 'successors', label: 'Successors', kind: 'standard', valueType: 'relations', description: 'Successor issue relations' },
 ]
 
 export function customFieldKey(id: number): string {

@@ -12,6 +12,8 @@ export type RemoteFieldValueType =
 export type RemoteFieldDescriptor = {
   key: string            // 'subject', 'due_date', 'cf_12', 'assigned_to', 'successors'
   label: string
+  /** Human-readable field description shown in the column chooser. */
+  description?: string
   kind: 'standard' | 'custom'
   valueType: RemoteFieldValueType
   multiple?: boolean   // true for multi-value custom fields — push writes value arrays

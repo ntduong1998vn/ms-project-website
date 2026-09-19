@@ -16,6 +16,7 @@ import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
 import { useGanttColumns } from '@/components/gantt/use-gantt-columns'
 import { useGanttProject } from '@/hooks/use-gantt-project'
 import { ResourceUsageView, TaskUsageView } from '@/components/gantt/usage-views'
+import { redmineStandardFields } from '@/lib/integrations/redmine/fields'
 
 export function GanttPage() {
   const { state, derived, actions, gantt, fileInputRef } = useGanttProject()
@@ -54,7 +55,6 @@ export function GanttPage() {
     isRedmineGetDialogOpen,
     setIsRedmineGetDialogOpen,
     integrationBusy,
-    lastSyncAt,
   } = state
   const {
     totalTasks,
@@ -80,7 +80,22 @@ export function GanttPage() {
   const mappedRemoteKeys = new Set(
     Object.values(integrationSettings.mapping.fields).filter((k): k is string => k !== null)
   )
-  const remoteColumnFields = integrationSettings.knownFields.filter((f) => !mappedRemoteKeys.has(f.key))
+  // assigned_to duplicates the Resource Names column
+  // description allowed: copied verbatim via extraFields so it can be shown as a column
+  const remoteColumnFields = (
+    integrationSettings.knownFields.length
+      ? integrationSettings.knownFields
+      : redmineStandardFields
+  )
+    .filter(
+      (f) =>
+        (!mappedRemoteKeys.has(f.key) || f.key === 'description') &&
+        !['assigned_to', 'assigned_to_id'].includes(f.key)
+    )
+    .map((f) => ({
+      ...f,
+      description: f.description ?? redmineStandardFields.find((s) => s.key === f.key)?.description,
+    }))
 
   const columns = useGanttColumns({
     tasks,
@@ -149,7 +164,6 @@ export function GanttPage() {
           onRedmineSync={actions.handleRedmineSync}
           onRedmineFetchMeta={actions.handleRedmineFetchMetadata}
           integrationBusy={integrationBusy}
-          lastSyncAt={lastSyncAt}
           integrationConfigured={
             integrationSettings.baseUrl.trim() !== '' && integrationSettings.apiKey.trim() !== ''
           }

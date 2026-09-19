@@ -81,7 +81,7 @@ export function ColumnChooserDialog({
                           <span>
                             <span className="block font-medium text-foreground">{field.label}</span>
                             <span className="block text-xs text-muted-foreground">
-                              {field.key}{field.kind === 'custom' ? ' · custom field' : ''}
+                              {field.description ?? field.key}{field.kind === 'custom' ? ' · custom field' : ''}
                             </span>
                           </span>
                           <span className="text-xs text-muted-foreground">{added ? 'Added' : 'Add'}</span>

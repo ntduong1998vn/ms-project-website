@@ -57,6 +57,7 @@ export type RedmineIssue = {
 export type RedmineCustomField = {
   id: number
   name: string
+  description?: string
   customized_type?: string
   field_format?: string
   /** Redmine versions differ: boolean true vs string '1'. */
