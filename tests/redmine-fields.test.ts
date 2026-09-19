@@ -132,6 +132,14 @@ describe('flattenRedmineIssue', () => {
       { key: '12', delay: 0 },
     ])
   })
+
+  it('omits optional named entity fields when the raw issue lacks them', () => {
+    const issue = redmineIssue({ id: 1, tracker: undefined, status: undefined, priority: undefined })
+    const remote = flattenRedmineIssue(issue)
+    expect(remote.fields.tracker).toBeUndefined()
+    expect(remote.fields.status).toBeUndefined()
+    expect(remote.fields.priority).toBeUndefined()
+  })
 })
 
 describe('custom field key helpers', () => {
@@ -362,5 +370,84 @@ describe('buildIssuePayload', () => {
     }), 'update')
 
     expect(payload.assigned_to_id).toBe(8)
+  })
+
+  it('skips parent and assignee resolution when mapping fields are unmapped', () => {
+    const task: ITask = { id: 2, text: 'Child', parent: 1, resources: [5] }
+    const mapping = defaultFieldMapping()
+    mapping.fields.parent = null
+    mapping.fields.resources = null
+    const payload = buildIssuePayload(task, ctx({ mapping }), 'update')
+
+    expect(payload.parent_issue_id).toBeUndefined()
+    expect(payload.assigned_to_id).toBeUndefined()
+  })
+
+  it('skips milestone due_date when the start date is missing', () => {
+    const task: ITask = { id: 1, text: 'Milestone', type: 'milestone' }
+    const payload = buildIssuePayload(task, ctx(), 'update')
+
+    expect(payload.due_date).toBeUndefined()
+  })
+
+  it('ignores empty, unresolvable and non-numeric extraFields', () => {
+    const mapping = defaultFieldMapping()
+    mapping.fields.text = null
+    mapping.fields.details = null
+    mapping.fields.start = null
+    mapping.fields.end = null
+    mapping.fields.duration = null
+    mapping.extraFields = [
+      'tracker',
+      'status',
+      'priority',
+      'fixed_version',
+      'assigned_to',
+      'assigned_to_id',
+      'parent_id',
+      'done_ratio',
+      'author',
+      'successors',
+      'subject',
+      'description',
+      'start_date',
+      'due_date',
+      'estimated_hours',
+    ]
+    const task = {
+      id: 1,
+      text: 'Mapped',
+      tracker: '  ',
+      status: '',
+      priority: 999,
+      fixed_version: 'Ghost',
+      assigned_to: 'Unknown',
+      assigned_to_id: 'abc',
+      parent_id: 'xyz',
+      done_ratio: 'abc',
+      author: 'Alice',
+      successors: 'x',
+      subject: 'Direct subject',
+      description: 'Direct desc',
+      start_date: '2026-09-01',
+      due_date: '2026-09-02',
+      estimated_hours: 12,
+    } as ITask
+    const payload = buildIssuePayload(task, ctx({ mapping }), 'update')
+
+    expect(payload.tracker_id).toBeUndefined()
+    expect(payload.status_id).toBeUndefined()
+    expect(payload.priority_id).toBeUndefined()
+    expect(payload.fixed_version_id).toBeUndefined()
+    expect(payload.assigned_to_id).toBeUndefined()
+    expect(payload.parent_issue_id).toBeUndefined()
+    expect(payload.done_ratio).toBeUndefined()
+    expect(payload.author).toBeUndefined()
+    expect(payload.successors).toBeUndefined()
+    expect(payload.subject).toBe('Direct subject')
+    expect(payload.description).toBe('Direct desc')
+    expect(payload.start_date).toBe('2026-09-01')
+    expect(payload.due_date).toBe('2026-09-02')
+    expect(payload.estimated_hours).toBe(12)
   })
 })
