@@ -1392,7 +1392,6 @@ export function useGanttProject() {
           return kept.length > 0 ? { ...task, resources: kept } : { ...task, resources: undefined }
         })
       )
-      setIsIntegrationDialogOpen(true)
       toast.info(
         `Project info: ${meta.members.length} members, ${meta.fields.length} fields, ${meta.trackers.length} trackers.`
       )
