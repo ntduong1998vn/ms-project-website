@@ -117,6 +117,20 @@ const WRITE_KEY_OVERRIDES: Record<string, string> = {
   assigned_to_id: 'assigned_to_id',
 }
 
+/**
+ * Standard remote keys a displayed column (extraFields) writes verbatim onto
+ * the issue payload — the task already stores Redmine-format values for these
+ * ('YYYY-MM-DD' strings, numbers). Keys needing name->id resolution or a
+ * different write key are handled separately in the extraFields loop.
+ */
+const DIRECT_EXTRA_KEYS: Record<string, true> = {
+  subject: true,
+  description: true,
+  start_date: true,
+  due_date: true,
+  estimated_hours: true,
+}
+
 function isValidDate(value: unknown): value is Date {
   return value instanceof Date && Number.isFinite(value.getTime())
 }
@@ -198,12 +212,85 @@ export function buildIssuePayload(
     if (createOpts?.projectIdentifier) payload.project_id = createOpts.projectIdentifier
   }
 
-  // extraFields: cf_* keys are pushed as custom_fields entries; non-cf keys are
-  // pull-only and skipped on write.
+  // extraFields (remote columns displayed in the grid): cf_* keys are pushed as
+  // custom_fields entries; standard keys write back so column edits reach
+  // Redmine. Runs AFTER the mapped-field writes so a displayed column's value
+  // wins when a key is both mapped and displayed. Keys imported but not shown
+  // as a column are never written.
+  const nameToId = (list: Array<{ id: number; name: string }>, name: unknown): number | null => {
+    if (typeof name !== 'string' || name.trim() === '') return null
+    const needle = name.trim().toLowerCase()
+    return list.find((entry) => entry.name.trim().toLowerCase() === needle)?.id ?? null
+  }
   for (const key of ctx.mapping.extraFields) {
+    if (!ctx.visibleRemoteColumns.includes(key)) continue
+    const value = task[key]
+    if (value === undefined || value === null) continue
     const cfId = parseCustomFieldKey(key)
-    if (cfId === null) continue
-    customFields.push({ id: cfId, value: toCustomFieldValue(key, task[key]) })
+    if (cfId !== null) {
+      // '' is allowed here — it clears the custom field.
+      customFields.push({ id: cfId, value: toCustomFieldValue(key, value) })
+      continue
+    }
+    // '' on a standard field would 422 — skip it.
+    if (value === '') continue
+    switch (key) {
+      case 'tracker': {
+        const id = nameToId(ctx.remoteMeta.trackers, value)
+        if (id !== null) payload.tracker_id = id
+        break
+      }
+      case 'status': {
+        const id = nameToId(ctx.remoteMeta.statuses, value)
+        if (id !== null) payload.status_id = id
+        break
+      }
+      case 'priority': {
+        const id = nameToId(ctx.remoteMeta.priorities, value)
+        if (id !== null) payload.priority_id = id
+        break
+      }
+      case 'fixed_version': {
+        const id = nameToId(ctx.remoteMeta.versions, value)
+        if (id !== null) payload.fixed_version_id = id
+        break
+      }
+      case 'assigned_to': {
+        // Same resolution as the mapped resources path: member name -> resource
+        // label -> externalKey (the Redmine user id), falling back to the
+        // fetched member list when the resource has no usable externalKey.
+        const resource = ctx.resources.find(
+          (r) => r.label.trim().toLowerCase() === String(value).trim().toLowerCase()
+        )
+        const resourceId = resource ? Number(resource.externalKey) : NaN
+        const id = Number.isFinite(resourceId)
+          ? resourceId
+          : nameToId(ctx.remoteMeta.members, value)
+        if (id !== null) payload.assigned_to_id = id
+        break
+      }
+      case 'assigned_to_id':
+      case 'parent_id': {
+        const id = Number(value)
+        if (Number.isFinite(id)) {
+          payload[key === 'parent_id' ? 'parent_issue_id' : key] = id
+        }
+        break
+      }
+      case 'done_ratio': {
+        // Cells may hold strings; Redmine validates done_ratio in steps of 10.
+        const ratio = Math.round(Number(value) / 10) * 10
+        if (Number.isFinite(ratio)) {
+          payload.done_ratio = Math.min(100, Math.max(0, ratio))
+        }
+        break
+      }
+      case 'author':
+      case 'successors':
+        break // read-only / relation data — never written
+      default:
+        if (DIRECT_EXTRA_KEYS[key]) payload[key] = value
+    }
   }
   if (customFields.length > 0) payload.custom_fields = customFields
 

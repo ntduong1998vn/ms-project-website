@@ -122,6 +122,10 @@ export type RedmineIssuePrioritiesResponse = {
   issue_priorities: RedmineNamedEntity[]
 }
 
+export type RedmineVersionsResponse = {
+  versions: RedmineNamedEntity[]
+}
+
 export type RedmineCustomFieldsResponse = {
   custom_fields: RedmineCustomField[]
   total_count?: number

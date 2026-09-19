@@ -16,6 +16,7 @@ export function defaultIntegrationSettings(): IntegrationSettings {
     knownTrackers: [],
     knownStatuses: [],
     knownPriorities: [],
+    knownVersions: [],
     knownMembers: [],
   }
 }

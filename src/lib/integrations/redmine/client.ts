@@ -24,6 +24,7 @@ import type {
   RedmineProjectResponse,
   RedmineTracker,
   RedmineUserResponse,
+  RedmineVersionsResponse,
 } from '@/lib/integrations/redmine/types'
 
 const PAGE_LIMIT = 100
@@ -133,7 +134,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
 
   async function fetchProjectMetadata(): Promise<RemoteProjectMetadata> {
     const projectId = settings.projectIdentifier
-    const [trackers, members, statuses, priorities, customFields] = await Promise.all([
+    const [trackers, members, statuses, priorities, versions, customFields] = await Promise.all([
       projectId
         ? request<RedmineProjectResponse>(
             `/projects/${encodeURIComponent(projectId)}.json?include=trackers`
@@ -161,6 +162,13 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
       request<RedmineIssuePrioritiesResponse>('/enumerations/issue_priorities.json')
         .then((j) => j.issue_priorities ?? [])
         .catch(() => [] as RedmineNamedEntity[]),
+      projectId
+        ? request<RedmineVersionsResponse>(
+            `/projects/${encodeURIComponent(projectId)}/versions.json`
+          )
+            .then((j) => j.versions ?? [])
+            .catch(() => [] as RedmineNamedEntity[])
+        : Promise.resolve([] as RedmineNamedEntity[]),
       // null distinguishes "request failed" from "no custom fields" — only the
       // former triggers the issue-page harvest below
       request<RedmineCustomFieldsResponse>('/custom_fields.json')
@@ -180,6 +188,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
       tracker: trackers.map((t) => ({ id: t.name, label: t.name })),
       status: statuses.map((s) => ({ id: s.name, label: s.name })),
       priority: priorities.map((p) => ({ id: p.name, label: p.name })),
+      fixed_version: versions.map((v) => ({ id: v.name, label: v.name })),
       assigned_to: memberNameOptions,
       author: memberNameOptions,
     }
@@ -190,8 +199,8 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
             const options =
               cf.field_format === 'user'
                 ? memberIdOptions
-                : cf.field_format === 'version' // no version list is fetched
-                  ? undefined
+                : cf.field_format === 'version'
+                  ? versions.map((v) => ({ id: String(v.id), label: v.name }))
                   : cf.possible_values?.map((pv) => ({
                       id: pv.value,
                       label: pv.label ?? pv.value,
@@ -213,6 +222,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
       members,
       statuses: statuses.map((s) => ({ id: s.id, name: s.name })),
       priorities: priorities.map((p) => ({ id: p.id, name: p.name })),
+      versions: versions.map((v) => ({ id: v.id, name: v.name })),
       fields: [
         ...redmineStandardFields.map((field) => ({
           ...field,

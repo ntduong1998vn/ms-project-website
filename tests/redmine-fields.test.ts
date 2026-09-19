@@ -26,13 +26,19 @@ function ctx(overrides: {
   descriptors?: RemoteFieldDescriptor[]
   keyByTaskId?: Map<string, string>
   resources?: GanttResource[]
+  remoteMeta?: PushContext['remoteMeta']
+  visibleRemoteColumns?: string[]
   durationUnit?: 'day' | 'hour'
 } = {}): PushContext {
+  const mapping = overrides.mapping ?? defaultFieldMapping()
   return {
-    mapping: overrides.mapping ?? defaultFieldMapping(),
+    mapping,
     descriptors: overrides.descriptors ?? [],
     keyByTaskId: overrides.keyByTaskId ?? new Map(),
     resources: overrides.resources ?? [],
+    remoteMeta: overrides.remoteMeta ?? { trackers: [], statuses: [], priorities: [], versions: [], members: [] },
+    // Default: every imported extraField counts as a displayed column.
+    visibleRemoteColumns: overrides.visibleRemoteColumns ?? mapping.extraFields,
     workingHoursPerDay: 8,
     durationUnit: overrides.durationUnit ?? 'day',
   }
@@ -237,14 +243,26 @@ describe('buildIssuePayload', () => {
     ])
   })
 
-  it('writes empty multi-value custom fields as empty arrays', () => {
+  it('writes empty multi-value custom fields as empty arrays and skips absent values', () => {
     const mapping = defaultFieldMapping()
     mapping.extraFields = ['cf_9']
     const descriptors: RemoteFieldDescriptor[] = [
       { key: 'cf_9', label: 'Env (custom)', kind: 'custom', valueType: 'string', multiple: true },
     ]
-    const payload = buildIssuePayload({ id: 1, text: 'A' }, ctx({ mapping, descriptors }), 'update')
-    expect(payload.custom_fields).toEqual([{ id: 9, value: [] }])
+    // '' clears the remote field
+    const cleared = buildIssuePayload(
+      { id: 1, text: 'A', cf_9: '' },
+      ctx({ mapping, descriptors }),
+      'update'
+    )
+    expect(cleared.custom_fields).toEqual([{ id: 9, value: [] }])
+    // absent value leaves the remote field untouched
+    const untouched = buildIssuePayload(
+      { id: 1, text: 'A' },
+      ctx({ mapping, descriptors }),
+      'update'
+    )
+    expect(untouched.custom_fields).toBeUndefined()
   })
 
   it('routes mapped cf_N fields into custom_fields and skips read-only keys', () => {
@@ -293,5 +311,56 @@ describe('buildIssuePayload', () => {
     mapping.extraFields = ['status']
     const payload = buildIssuePayload({ id: 1, text: 'A' }, ctx({ mapping }), 'update')
     expect(payload.custom_fields).toBeUndefined()
+  })
+
+  it('skips extraFields whose column is not displayed', () => {
+    const mapping = defaultFieldMapping()
+    mapping.extraFields = ['status', 'cf_7']
+    const task: ITask = { id: 1, text: 'A', status: 'Closed', cf_7: 'x' }
+    const payload = buildIssuePayload(task, ctx({
+      mapping,
+      visibleRemoteColumns: ['cf_7'],
+      remoteMeta: { trackers: [], statuses: [{ id: 5, name: 'Closed' }], priorities: [], versions: [], members: [] },
+    }), 'update')
+
+    expect(payload.status_id).toBeUndefined()
+    expect(payload.custom_fields).toEqual([{ id: 7, value: 'x' }])
+  })
+
+  it('resolves tracker names case-insensitively with trimming', () => {
+    const mapping = defaultFieldMapping()
+    mapping.extraFields = ['tracker']
+    const task: ITask = { id: 1, text: 'A', tracker: '  bug ' }
+    const payload = buildIssuePayload(task, ctx({
+      mapping,
+      remoteMeta: { trackers: [{ id: 2, name: 'Bug' }], statuses: [], priorities: [], versions: [], members: [] },
+    }), 'update')
+
+    expect(payload.tracker_id).toBe(2)
+  })
+
+  it('coerces done_ratio strings to the nearest step of 10 and clamps to 0-100', () => {
+    const mapping = defaultFieldMapping()
+    mapping.extraFields = ['done_ratio']
+    const build = (value: unknown) =>
+      buildIssuePayload({ id: 1, text: 'A', done_ratio: value } as ITask, ctx({ mapping }), 'update')
+
+    expect(build('45').done_ratio).toBe(50)
+    expect(build('44').done_ratio).toBe(40)
+    expect(build('130').done_ratio).toBe(100)
+    expect(build('abc').done_ratio).toBeUndefined()
+  })
+
+  it('falls back to member name match when the resource has no externalKey', () => {
+    const mapping = defaultFieldMapping()
+    mapping.extraFields = ['assigned_to']
+    const task: ITask = { id: 1, text: 'A', assigned_to: 'Bob' }
+    const payload = buildIssuePayload(task, ctx({
+      mapping,
+      resources: [{ id: 5, label: 'Bob' }],
+      remoteMeta: { trackers: [], statuses: [], priorities: [], versions: [], members: [{ id: 8, name: 'Bob' }] },
+    }), 'update')
+
+    expect(payload.assigned_to_id).toBe(8)
   })
 })

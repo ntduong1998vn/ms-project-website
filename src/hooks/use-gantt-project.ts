@@ -1222,6 +1222,7 @@ export function useGanttProject() {
           knownTrackers: meta.trackers,
           knownStatuses: meta.statuses,
           knownPriorities: meta.priorities,
+          knownVersions: meta.versions,
           knownMembers: meta.members,
         }
         setIntegrationSettings(merged)
@@ -1302,6 +1303,14 @@ export function useGanttProject() {
           linkedTasks(tasks, 'redmine').map((task) => [String(task.id), String(task.externalKey)])
         ),
         resources: resourceList,
+        remoteMeta: {
+          trackers: settings.knownTrackers,
+          statuses: settings.knownStatuses,
+          priorities: settings.knownPriorities,
+          versions: settings.knownVersions,
+          members: settings.knownMembers,
+        },
+        visibleRemoteColumns,
         workingHoursPerDay: calendarConfig.workingHoursPerDay,
         durationUnit,
       }
@@ -1327,7 +1336,7 @@ export function useGanttProject() {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks])
+  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, visibleRemoteColumns])
 
   const handleRedmineSync = useCallback(async () => {
     if (busyRef.current) return
@@ -1348,6 +1357,14 @@ export function useGanttProject() {
           linked.map((task) => [String(task.id), String(task.externalKey)])
         ),
         resources: resourceList,
+        remoteMeta: {
+          trackers: settings.knownTrackers,
+          statuses: settings.knownStatuses,
+          priorities: settings.knownPriorities,
+          versions: settings.knownVersions,
+          members: settings.knownMembers,
+        },
+        visibleRemoteColumns,
         workingHoursPerDay: calendarConfig.workingHoursPerDay,
         durationUnit,
       }
@@ -1372,7 +1389,7 @@ export function useGanttProject() {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks])
+  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, visibleRemoteColumns])
 
   const handleRedmineFetchMetadata = useCallback(async () => {
     if (busyRef.current) return
@@ -1387,6 +1404,7 @@ export function useGanttProject() {
         knownTrackers: meta.trackers,
         knownStatuses: meta.statuses,
         knownPriorities: meta.priorities,
+        knownVersions: meta.versions,
         knownMembers: meta.members,
       }
       setIntegrationSettings(merged)

@@ -47,6 +47,7 @@ function cloneSettings(s: IntegrationSettings): IntegrationSettings {
     knownTrackers: [...s.knownTrackers],
     knownStatuses: [...s.knownStatuses],
     knownPriorities: [...s.knownPriorities],
+    knownVersions: [...s.knownVersions],
     knownMembers: [...s.knownMembers],
   }
 }
@@ -94,6 +95,7 @@ function IntegrationSettingsContent({
     draft.knownTrackers.length > 0 ||
     draft.knownStatuses.length > 0 ||
     draft.knownPriorities.length > 0 ||
+    draft.knownVersions.length > 0 ||
     draft.knownMembers.length > 0
 
   const setFieldMapping = (taskField: SyncTaskField, remoteKey: string | null) => {
@@ -145,6 +147,7 @@ function IntegrationSettingsContent({
         knownTrackers: meta.trackers,
         knownStatuses: meta.statuses,
         knownPriorities: meta.priorities,
+        knownVersions: meta.versions,
         knownMembers: meta.members,
       }))
     } catch (err) {
@@ -360,6 +363,12 @@ function IntegrationSettingsContent({
                   Priorities
                 </span>
                 <ChipList items={draft.knownPriorities} />
+              </div>
+              <div>
+                <span className="mb-1 block text-xs font-medium text-muted-foreground">
+                  Versions
+                </span>
+                <ChipList items={draft.knownVersions} />
               </div>
               <div>
                 <span className="mb-1 block text-xs font-medium text-muted-foreground">

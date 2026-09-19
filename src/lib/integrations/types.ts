@@ -39,6 +39,7 @@ export type RemoteProjectMetadata = {
   members: Array<{ id: number; name: string }>
   statuses: Array<{ id: number; name: string }>
   priorities: Array<{ id: number; name: string }>
+  versions: Array<{ id: number; name: string }>
   fields: RemoteFieldDescriptor[]
 }
 
@@ -61,6 +62,7 @@ export type IntegrationSettings = {
   knownTrackers: Array<{ id: number; name: string }>
   knownStatuses: Array<{ id: number; name: string }>
   knownPriorities: Array<{ id: number; name: string }>
+  knownVersions: Array<{ id: number; name: string }>
   knownMembers: Array<{ id: number; name: string }>
 }
 
@@ -69,6 +71,19 @@ export type PushContext = {
   descriptors: RemoteFieldDescriptor[]         // for cf `multiple` flags on push
   keyByTaskId: Map<string, string>            // taskId -> remote issue key; LIVE map — seeded from linked tasks, updated after each createIssue so same-batch children resolve new parents
   resources: GanttResource[]                  // for assigned_to externalKey resolution
+  // Remote field keys whose column is currently shown in the gantt grid —
+  // extraFields write-back is limited to these.
+  visibleRemoteColumns: string[]
+  // Name -> id lookup lists for displayed remote columns (extraFields): the
+  // task stores names for tracker/status/priority/fixed_version/assigned_to,
+  // but the Redmine write API wants ids.
+  remoteMeta: {
+    trackers: Array<{ id: number; name: string }>
+    statuses: Array<{ id: number; name: string }>
+    priorities: Array<{ id: number; name: string }>
+    versions: Array<{ id: number; name: string }>
+    members: Array<{ id: number; name: string }>
+  }
   workingHoursPerDay: number
   durationUnit: 'day' | 'hour'
 }
