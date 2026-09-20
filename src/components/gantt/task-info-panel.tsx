@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ILink, ITask } from '@svar-ui/react-gantt'
 import { Trash2, X } from 'lucide-react'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
@@ -42,7 +42,28 @@ export function TaskInfoPanel({
   const [newPredecessorType, setNewPredecessorType] = useState<DependencyType>('e2s')
   const taskId = task.id
   const taskResources = new Set((task as TaskWithResources).resources ?? [])
-
+  const description =
+    task.details !== undefined
+      ? String(task.details ?? '')
+      : typeof (task as Record<string, unknown>).description === 'string'
+        ? String((task as Record<string, unknown>).description)
+        : ''
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      const target = event.target as HTMLElement | null
+      if (
+        target?.closest?.(
+          'input, textarea, select, [contenteditable], [role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper]'
+        )
+      ) {
+        return
+      }
+      onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
   if (taskId === undefined) return null
 
@@ -69,7 +90,7 @@ export function TaskInfoPanel({
     <aside
       aria-label="Task information"
       data-panel="task-info"
-      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border bg-card"
+      className="absolute inset-y-0 right-0 z-30 flex w-[320px] flex-col border-l border-border bg-card shadow-2xl animate-in slide-in-from-right duration-200"
     >
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
@@ -131,6 +152,17 @@ export function TaskInfoPanel({
                 className="w-full rounded-md border border-input bg-background px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
             </label>
+            <section className="block space-y-1.5">
+              <h3 className="text-xs font-medium text-muted-foreground">Description</h3>
+              <textarea
+                value={description}
+                onChange={(event) => onTaskChange(taskId, { details: event.target.value })}
+                rows={3}
+                aria-label="Description"
+                placeholder="Add a description…"
+                className="w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </section>
             <dl className="rounded-lg border border-border bg-background p-3 text-xs">
               <div>
                 <dt className="text-muted-foreground">Type</dt>

@@ -1,17 +1,22 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Gantt, Willow } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
 import { CsvImportDialog } from '@/components/csv-import-dialog'
 import { ClipboardImportDialog } from '@/components/clipboard-import-dialog'
 import { CalendarSettingsDialog } from '@/components/calendar-settings-dialog'
+import { IntegrationSettingsDialog } from '@/components/integration-settings-dialog'
 import { AppLayout } from '@/components/layout/app-layout'
 import { ColumnChooserDialog } from '@/components/gantt/column-chooser-dialog'
+import { DeleteTasksDialog } from '@/components/gantt/delete-tasks-dialog'
+import { RedmineGetDialog } from '@/components/gantt/redmine-get-dialog'
+import { Toaster } from '@/components/ui/sonner'
 import { GanttRibbon } from '@/components/gantt/gantt-ribbon'
 import { ResourcesPanel } from '@/components/gantt/resources-panel'
 import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
 import { useGanttColumns } from '@/components/gantt/use-gantt-columns'
 import { useGanttProject } from '@/hooks/use-gantt-project'
 import { ResourceUsageView, TaskUsageView } from '@/components/gantt/usage-views'
+import { redmineStandardFields } from '@/lib/integrations/redmine/fields'
 
 export function GanttPage() {
   const { state, derived, actions, gantt, fileInputRef } = useGanttProject()
@@ -27,6 +32,7 @@ export function GanttPage() {
     isColumnChooserOpen,
     setIsColumnChooserOpen,
     isWorkColumnVisible,
+    visibleRemoteColumns,
     isGanttVisible,
     showCriticalPath,
     viewMode,
@@ -36,12 +42,19 @@ export function GanttPage() {
     setSelectedTaskId,
     selectedTaskIds,
     setSelectedTaskIds,
+    pendingDeleteIds,
     durationUnit,
     zoom,
     setZoom,
     tasks,
     links,
     resourceList,
+    integrationSettings,
+    isIntegrationDialogOpen,
+    setIsIntegrationDialogOpen,
+    isRedmineGetDialogOpen,
+    setIsRedmineGetDialogOpen,
+    integrationBusy,
   } = state
   const {
     totalTasks,
@@ -53,7 +66,9 @@ export function GanttPage() {
     canLink,
     canUnlink,
     displayTasks,
+    pendingDeleteTasks,
     displayLinks,
+    visibleRemoteFieldKeys,
   } = derived
   const { handleTaskSelection } = actions
   const handleColumnSelectTask = useCallback(
@@ -63,6 +78,31 @@ export function GanttPage() {
     [handleTaskSelection]
   )
 
+  // assigned_to duplicates the Resource Names column.
+  // 'description' is allowed through the mapped-key filter: its column is
+  // unified on task.details (see use-gantt-columns) rather than extraFields.
+  const remoteColumnFields = useMemo(() => {
+    const mappedRemoteKeys = new Set(
+      Object.values(integrationSettings.mapping.fields).filter((k): k is string => k !== null)
+    )
+    return (
+      integrationSettings.knownFields.length
+        ? integrationSettings.knownFields
+        : redmineStandardFields
+    )
+      .filter(
+        (f) =>
+          (!mappedRemoteKeys.has(f.key) || f.key === 'description') &&
+          !['assigned_to', 'assigned_to_id'].includes(f.key)
+      )
+      .map((f) => ({
+        ...f,
+        description: f.description ?? redmineStandardFields.find((s) => s.key === f.key)?.description,
+      }))
+  }, [integrationSettings])
+  // visibleRemoteFieldKeys (from the hook) already filters visibleRemoteColumns
+  // to displayable keys — the same set PushContext uses for write-back gating.
+
   const columns = useGanttColumns({
     tasks,
     links,
@@ -70,6 +110,8 @@ export function GanttPage() {
     calendarConfig,
     durationUnit,
     isWorkColumnVisible,
+    visibleRemoteColumns: visibleRemoteFieldKeys,
+    remoteFields: remoteColumnFields,
     selectedTaskId,
     ganttApi: gantt.api,
     onSelectTask: handleColumnSelectTask,
@@ -99,8 +141,7 @@ export function GanttPage() {
           onToggleAutoSchedule={actions.handleToggleAutoSchedule}
           onAddTask={actions.handleAddTaskAction}
           onAddMilestone={actions.handleAddMilestoneAction}
-          onDeleteSelectedTask={actions.handleDeleteSelectedTask}
-          selectedTaskId={selectedTaskId}
+          onDeleteSelectedTask={actions.handleRequestDeleteSelectedTasks}
           canIndent={canIndent}
           onIndent={actions.handleIndent}
           canOutdent={canOutdent}
@@ -123,15 +164,49 @@ export function GanttPage() {
           showCriticalPath={showCriticalPath}
           onToggleCriticalPath={actions.handleToggleCriticalPath}
           onViewModeChange={actions.handleViewModeChange}
+          onOpenIntegrationSettings={() => setIsIntegrationDialogOpen(true)}
+          onRedmineGet={actions.handleRedmineGet}
+          onRedminePushNew={actions.handleRedminePushNew}
+          onRedmineSync={actions.handleRedmineSync}
+          onRedmineFetchMeta={actions.handleRedmineFetchMetadata}
+          integrationBusy={integrationBusy}
+          integrationConfigured={
+            integrationSettings.baseUrl.trim() !== '' && integrationSettings.apiKey.trim() !== ''
+          }
         />
       }
       overlays={
-        <CalendarSettingsDialog
-          open={isCalendarDialogOpen}
-          onOpenChange={setIsCalendarDialogOpen}
-          calendarConfig={calendarConfig}
-          onSave={actions.handleSaveCalendar}
-        />
+        <>
+          <CalendarSettingsDialog
+            open={isCalendarDialogOpen}
+            onOpenChange={setIsCalendarDialogOpen}
+            calendarConfig={calendarConfig}
+            onSave={actions.handleSaveCalendar}
+          />
+          <IntegrationSettingsDialog
+            open={isIntegrationDialogOpen}
+            onOpenChange={setIsIntegrationDialogOpen}
+            settings={integrationSettings}
+            onSave={actions.handleSaveIntegrationSettings}
+            onTestConnection={actions.handleTestIntegrationConnection}
+            onFetchMetadata={actions.handleFetchIntegrationMetadata}
+          />
+          <DeleteTasksDialog
+            open={pendingDeleteIds !== null}
+            onOpenChange={(open) => { if (!open) actions.handleCancelDeleteTasks() }}
+            tasks={pendingDeleteTasks}
+            selectedCount={selectedTaskIds.length}
+            onConfirm={actions.handleConfirmDeleteTasks}
+          />
+          <RedmineGetDialog
+            open={isRedmineGetDialogOpen}
+            onOpenChange={setIsRedmineGetDialogOpen}
+            taskCount={tasks.length}
+            onClearAndGet={actions.handleRedmineGetClear}
+            onKeepAndUpsert={actions.handleRedmineGetUpsert}
+          />
+          <Toaster richColors closeButton position="top-right" />
+        </>
       }
     >
       <input
@@ -168,7 +243,7 @@ export function GanttPage() {
           onTimescaleChange={(timescale) => setZoom(timescale)}
         />
       ) : (
-        <div className="flex h-full min-h-0 w-full">
+        <div className="relative flex h-full min-h-0 w-full">
           <div className="min-w-0 flex-1">
             <Willow>
               <Gantt
@@ -240,6 +315,9 @@ export function GanttPage() {
         workVisible={isWorkColumnVisible}
         onOpenChange={setIsColumnChooserOpen}
         onAddWork={actions.handleAddWorkColumn}
+        remoteFields={remoteColumnFields}
+        visibleRemoteColumns={visibleRemoteColumns}
+        onAddRemoteField={actions.handleAddRemoteColumn}
       />
     </AppLayout>
   )

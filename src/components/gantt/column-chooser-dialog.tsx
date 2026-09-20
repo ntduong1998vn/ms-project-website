@@ -1,16 +1,23 @@
 import { Dialog } from 'radix-ui'
 import { X } from 'lucide-react'
+import type { RemoteFieldDescriptor } from '@/lib/integrations/types'
 
 export function ColumnChooserDialog({
   open,
   workVisible,
   onOpenChange,
   onAddWork,
+  remoteFields,
+  visibleRemoteColumns,
+  onAddRemoteField,
 }: {
   open: boolean
   workVisible: boolean
   onOpenChange: (open: boolean) => void
   onAddWork: () => void
+  remoteFields: RemoteFieldDescriptor[]
+  visibleRemoteColumns: string[]
+  onAddRemoteField: (field: RemoteFieldDescriptor) => void
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -40,19 +47,51 @@ export function ColumnChooserDialog({
                 </button>
               </Dialog.Close>
             </div>
-            <button
-              type="button"
-              onClick={onAddWork}
-              disabled={workVisible}
-              aria-pressed={workVisible}
-              className="mt-4 flex w-full items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-60"
-            >
-              <span>
-                <span className="block font-medium text-foreground">Work</span>
-                <span className="block text-xs text-muted-foreground">Calculated effort in hours</span>
-              </span>
-              <span className="text-xs text-muted-foreground">{workVisible ? 'Already shown' : 'Add'}</span>
-            </button>
+            <div className="mt-4 space-y-4">
+              <div>
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Default</p>
+                <button
+                  type="button"
+                  onClick={onAddWork}
+                  disabled={workVisible}
+                  aria-pressed={workVisible}
+                  className="flex w-full items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-60"
+                >
+                  <span>
+                    <span className="block font-medium text-foreground">Work</span>
+                    <span className="block text-xs text-muted-foreground">Calculated effort in hours</span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">{workVisible ? 'Already shown' : 'Add'}</span>
+                </button>
+              </div>
+              {remoteFields.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Redmine</p>
+                  <div className="max-h-56 space-y-1.5 overflow-y-auto">
+                    {remoteFields.map((field) => {
+                      const added = visibleRemoteColumns.includes(field.key)
+                      return (
+                        <button
+                          key={field.key}
+                          type="button"
+                          onClick={() => onAddRemoteField(field)}
+                          disabled={added}
+                          className="flex w-full items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-60"
+                        >
+                          <span>
+                            <span className="block font-medium text-foreground">{field.label}</span>
+                            <span className="block text-xs text-muted-foreground">
+                              {field.description ?? field.key}{field.kind === 'custom' ? ' · custom field' : ''}
+                            </span>
+                          </span>
+                          <span className="text-xs text-muted-foreground">{added ? 'Added' : 'Add'}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           </Dialog.Content>
         )}
       </Dialog.Portal>

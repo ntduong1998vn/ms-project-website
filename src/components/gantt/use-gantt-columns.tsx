@@ -18,6 +18,7 @@ import { sameTaskId } from '@/lib/task-helpers'
 import { collectDistinctOptions, taskTextFilter, workHours } from '@/lib/gantt-filters'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
+import type { RemoteFieldDescriptor } from '@/lib/integrations/types'
 
 export type UseGanttColumnsOptions = {
   tasks: ITask[]
@@ -26,6 +27,8 @@ export type UseGanttColumnsOptions = {
   calendarConfig: ProjectCalendarConfig
   durationUnit: 'day' | 'hour'
   isWorkColumnVisible: boolean
+  visibleRemoteColumns: string[]
+  remoteFields: RemoteFieldDescriptor[]
   selectedTaskId: string | number | null
   ganttApi: IApi | null
   onSelectTask: (id: string | number) => void
@@ -43,6 +46,8 @@ export function useGanttColumns({
   calendarConfig,
   durationUnit,
   isWorkColumnVisible,
+  visibleRemoteColumns,
+  remoteFields,
   selectedTaskId,
   ganttApi,
   onSelectTask,
@@ -269,6 +274,41 @@ export function useGanttColumns({
         })
       }
 
+      const remoteColumns: IColumnConfig[] = visibleRemoteColumns
+        .map((key) => remoteFields.find((field) => field.key === key))
+        .filter((field): field is RemoteFieldDescriptor => field !== undefined)
+        .map((field) => {
+          const options = field.options
+          return {
+            // 'description' is unified on task.details: the gantt's update-cell
+            // intercept writes task[column.id] directly (column setters are
+            // dropped by normalizeColumns), so the column id must be 'details'.
+            id: field.key === 'description' ? 'details' : field.key,
+            header: headerCell(field.label, { sortable: true }),
+            width: 110,
+            align: 'center' as const,
+            sort: true,
+            // Enumerated fields get a dropdown editor. Options must live in
+            // editor.config.options, NOT column.options: grid-store builds an
+            // optionsMap from column.options and maps the getter result through
+            // it, which would double-map since labels are resolved by the cell.
+            editor: options?.length
+              ? { type: 'richselect' as const, config: { options } }
+              : ('text' as const),
+            // Raw stored value — the richselect editor seeds itself from the
+            // getter and writes back an option id; labels are display-only via
+            // the cell below.
+            getter: (task: ITask) => remoteFieldRawValue(task, field),
+            cell: (({ row }: { row: ITask }) => (
+              <RemoteFieldCell row={row} field={field} />
+            )) as unknown as IColumnConfig['cell'],
+          }
+        })
+      if (remoteColumns.length > 0) {
+        const addTaskIndex = columns.findIndex((column) => column.id === 'add-task')
+        columns.splice(addTaskIndex === -1 ? columns.length : addTaskIndex, 0, ...remoteColumns)
+      }
+
       return columns
     },
     [
@@ -287,6 +327,48 @@ export function useGanttColumns({
       selectedTaskId,
       tasks,
       warningsByTask,
+      remoteFields,
+      visibleRemoteColumns,
     ]
   )
+}
+
+// Remote-column values are stored raw on the task: option ids for enumerated
+// fields, '; '-joined strings for multi-value custom fields, and
+// Array<{ key, delay }> for 'successors'.
+function remoteFieldRawValue(task: ITask, field: RemoteFieldDescriptor): unknown {
+  // 'description' is unified on task.details (the canonical mapped field).
+  return field.key === 'description'
+    ? task.details
+    : (task as Record<string, unknown>)[field.key]
+}
+
+function formatRemoteFieldValue(raw: unknown, field: RemoteFieldDescriptor): string {
+  if (raw == null || raw === '') return ''
+  const resolve = (value: unknown): string => {
+    const match = field.options?.find((o) => String(o.id) === String(value))
+    return match?.label ?? String(value)
+  }
+  if (Array.isArray(raw)) {
+    // 'successors' stores relation rows — render "key (+delay)", never
+    // "[object Object]".
+    return raw
+      .map((entry) => {
+        if (entry !== null && typeof entry === 'object' && 'key' in entry) {
+          const relation = entry as { key: unknown; delay?: unknown }
+          const delay = typeof relation.delay === 'number' ? relation.delay : 0
+          return `${relation.key} (+${delay})`
+        }
+        return resolve(entry)
+      })
+      .join(', ')
+  }
+  if (field.multiple && typeof raw === 'string') {
+    return raw.split('; ').map(resolve).join('; ')
+  }
+  return resolve(raw)
+}
+
+function RemoteFieldCell({ row, field }: { row: ITask; field: RemoteFieldDescriptor }) {
+  return <>{formatRemoteFieldValue(remoteFieldRawValue(row, field), field)}</>
 }
