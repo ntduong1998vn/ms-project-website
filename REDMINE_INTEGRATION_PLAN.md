@@ -1,5 +1,7 @@
 # Redmine Integration Plan
 
+> **Status: historical design document.** Sections below describe the initial design; the implementation has since evolved (sonner toasts, no auto-open settings dialog, extraFields write-back with name→id resolution, remoteMeta/visibleRemoteColumns in PushContext).
+
 ## Context
 
 Add a Redmine (REST API) integration to the Gantt SPA with an extensible provider architecture (JIRA later). Features, per user:

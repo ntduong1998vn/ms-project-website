@@ -23,7 +23,7 @@ export type RemoteFieldDescriptor = {
 }
 
 /** Normalized remote issue. Value conventions (provider MUST normalize):
- *  - dates: 'YYYY-MM-DD' strings; end dates already EXCLUSIVE
+ *  - dates: 'YYYY-MM-DD' strings; end dates INCLUSIVE (raw remote finish date; sync layer converts to exclusive internally)
  *  - '*_hours': number of hours
  *  - '*_id': number
  *  - 'successors': Array<{ key: string; delay: number }>

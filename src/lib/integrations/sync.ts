@@ -123,6 +123,11 @@ export function applyRemoteIssues(
   for (const task of existing.tasks) {
     if (task.id !== undefined && task.parent !== undefined) parents.set(String(task.id), task.parent)
   }
+  // A task re-typed to milestone can no longer be a parent — drop seeded
+  // parent pointers whose resolved parent is now a milestone.
+  for (const [childId, parentId] of parents) {
+    if (typeById.get(String(parentId)) === 'milestone') parents.delete(childId)
+  }
   for (const entry of entries) {
     if (mapping.fields.parent === null) continue
     const rawParent = field(entry.issue, 'parent')
@@ -196,7 +201,7 @@ export function applyRemoteIssues(
     let endResolved = false
     if (parsedFinish) {
       const exclusiveEnd = inclusiveFinishToExclusiveEnd(parsedFinish)
-      if (exclusiveEnd.getTime() >= start.getTime()) {
+      if (exclusiveEnd.getTime() > start.getTime()) {
         end = exclusiveEnd
         endResolved = true
       }
@@ -247,7 +252,7 @@ export function applyRemoteIssues(
     let resources: number[] | undefined
     if (resourcesMapped) {
       const rawAssigned = field(issue, 'resources')
-      const rawAssignedId = issue.fields['assigned_to_id']
+      const rawAssignedId = mapping.fields.resources === 'assigned_to' ? issue.fields['assigned_to_id'] : undefined
       const name = typeof rawAssigned === 'string' && rawAssigned !== '' ? rawAssigned : undefined
       const externalKey =
         typeof rawAssignedId === 'number' && Number.isFinite(rawAssignedId) ? String(rawAssignedId) : undefined
@@ -265,11 +270,11 @@ export function applyRemoteIssues(
         duration,
         progress,
         type,
-        open: type === 'summary' || parentIds.has(String(id)),
         externalSource: providerId,
         externalKey: issue.key,
       }
       if (parent !== undefined) task.parent = parent
+      if (parentIds.has(String(id))) task.open = true
       if (resources && resources.length > 0) task.resources = resources
       if (details !== undefined && details !== '') task.details = details
       for (const key of mapping.extraFields) {
@@ -336,6 +341,30 @@ export function applyRemoteIssues(
   for (const root of insertedRoots) visit(root)
   for (const task of insertedTasks) visit(task)
   mergedTasks.push(...orderedInserted)
+
+  // 7b. Hierarchy invariants on the merged result (mirrors resequenceProject):
+  // no task may point at a milestone parent, and `open` is only allowed on
+  // tasks that actually have children — SVAR crashes on `open` leaf tasks.
+  // Copy before mutating: mergedTasks may share objects with existing.tasks.
+  for (let index = 0; index < mergedTasks.length; index += 1) {
+    const task = mergedTasks[index]
+    if (task.parent !== undefined && typeById.get(String(task.parent)) === 'milestone') {
+      const copy = { ...task }
+      delete copy.parent
+      mergedTasks[index] = copy
+    }
+  }
+  const mergedParentIds = new Set(
+    mergedTasks.filter((task) => task.parent !== undefined).map((task) => String(task.parent))
+  )
+  for (let index = 0; index < mergedTasks.length; index += 1) {
+    const task = mergedTasks[index]
+    if (task.open !== undefined && !mergedParentIds.has(String(task.id))) {
+      const copy = { ...task }
+      delete copy.open
+      mergedTasks[index] = copy
+    }
+  }
 
   // 8. Links: remote relations are authoritative only between tasks synced in
   // this fetch — links to local-only tasks survive.

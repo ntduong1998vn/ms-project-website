@@ -62,11 +62,13 @@ export function DatePicker({
       >
         <Calendar
           mode="single"
+          required
           selected={date}
           defaultMonth={date}
           captionLayout="dropdown"
+          startMonth={new Date(2000, 0)}
+          endMonth={new Date(2100, 11)}
           onSelect={(d) => {
-            if (!d) return
             onChange(new Date(d.getFullYear(), d.getMonth(), d.getDate()))
             setOpen(false)
           }}

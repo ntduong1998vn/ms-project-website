@@ -309,12 +309,82 @@ describe('applyRemoteIssues', () => {
           { id: 1, text: 'A', externalSource: 'redmine', externalKey: '1' },
           { id: 2, text: 'B', externalSource: 'redmine', externalKey: '2' },
         ],
-        links: [{ id: 'local', source: 1, target: 9, type: 'e2s' }],
+        links: [
+          { id: 'local', source: 1, target: 9, type: 'e2s' },
+          { id: 5, source: 9, target: 1, type: 'e2s' },
+        ],
       }
     )
     if (result.kind !== 'success') return
     const created = result.links.find((link) => link.target === 2)
-    expect(created?.id).toBe(1)
+    expect(created?.id).toBe(6)
+  })
+
+  it('does not set open on an inserted remote summary with no children', () => {
+    const mapping = defaultFieldMapping()
+    mapping.fields.type = 'tracker'
+    const result = apply([issue('1', { subject: 'Solo', tracker: 'summary' })], {}, { mapping })
+    if (result.kind !== 'success') return
+    const task = result.tasks.find((t) => t.externalKey === '1')
+    expect(task?.type).toBe('summary')
+    expect(task?.open).toBeFalsy()
+  })
+
+  it('removes open from an existing parent whose children re-parent away', () => {
+    const tasks: ITask[] = [
+      { id: 1, text: 'Old parent', open: true },
+      { id: 2, text: 'New parent', externalSource: 'redmine', externalKey: '10' },
+      { id: 3, text: 'Child', parent: 1, externalSource: 'redmine', externalKey: '11' },
+    ]
+    const result = apply(
+      [issue('10', { subject: 'New parent' }), issue('11', { subject: 'Child', parent_id: 10 })],
+      { tasks }
+    )
+    if (result.kind !== 'success') return
+    const oldParent = result.tasks.find((task) => task.id === 1)
+    const child = result.tasks.find((task) => task.externalKey === '11')
+    expect(child?.parent).toBe(2)
+    expect(oldParent?.open).toBeUndefined()
+  })
+
+  it('resolves parent_id against previously synced tasks absent from the fetch', () => {
+    const tasks: ITask[] = [{ id: 4, text: 'Synced parent', externalSource: 'redmine', externalKey: '50' }]
+    const result = apply([issue('60', { subject: 'Child', parent_id: 50 })], { tasks })
+    if (result.kind !== 'success') return
+    const child = result.tasks.find((task) => task.externalKey === '60')
+    expect(child?.parent).toBe(4)
+  })
+
+  it('strips children when a linked task re-types to milestone', () => {
+    const mapping = defaultFieldMapping()
+    mapping.fields.type = 'tracker'
+    const tasks: ITask[] = [
+      { id: 1, text: 'Parent', type: 'summary', open: true, externalSource: 'redmine', externalKey: '1' },
+      { id: 2, text: 'Child', parent: 1, externalSource: 'redmine', externalKey: '2' },
+    ]
+    const result = apply(
+      [issue('1', { subject: 'Parent', tracker: 'milestone' }), issue('2', { subject: 'Child', parent_id: 1 })],
+      { tasks },
+      { mapping }
+    )
+    if (result.kind !== 'success') return
+    const parent = result.tasks.find((task) => task.externalKey === '1')
+    const child = result.tasks.find((task) => task.externalKey === '2')
+    expect(parent?.type).toBe('milestone')
+    expect(child?.parent).toBeUndefined()
+    expect(parent?.open).toBeUndefined()
+  })
+
+  it('derives end from duration when due_date is one day before start_date', () => {
+    // due_date Sep 7 → exclusive end Sep 8 == start Sep 8: must NOT be accepted
+    // as a zero-width end; falls back to estimated_hours (16h → 2 days).
+    const result = apply([
+      issue('1', { subject: 'A', start_date: '2026-09-08', due_date: '2026-09-07', estimated_hours: 16 }),
+    ])
+    if (result.kind !== 'success') return
+    const task = result.tasks[0]
+    expect(task.duration).toBe(2)
+    expect(task.end?.getTime()).toBeGreaterThan(task.start!.getTime())
   })
 
   it('resolves assignees by externalKey, then name, then creates a keyed resource', () => {

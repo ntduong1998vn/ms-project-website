@@ -317,7 +317,13 @@ describe('buildIssuePayload', () => {
   it('emits no custom_fields key when extraFields hold only non-cf keys', () => {
     const mapping = defaultFieldMapping()
     mapping.extraFields = ['status']
-    const payload = buildIssuePayload({ id: 1, text: 'A' }, ctx({ mapping }), 'update')
+    const task: ITask = { id: 1, text: 'A', status: 'New' }
+    const payload = buildIssuePayload(task, ctx({
+      mapping,
+      remoteMeta: { trackers: [], statuses: [{ id: 1, name: 'New' }], priorities: [], versions: [], members: [] },
+    }), 'update')
+
+    expect(payload.status_id).toBe(1)
     expect(payload.custom_fields).toBeUndefined()
   })
 
@@ -335,6 +341,15 @@ describe('buildIssuePayload', () => {
     expect(payload.custom_fields).toEqual([{ id: 7, value: 'x' }])
   })
 
+  it('lets a displayed column value win over the mapped field for the same remote key', () => {
+    const mapping = defaultFieldMapping()
+    mapping.extraFields = ['subject']
+    const task: ITask = { id: 1, text: 'Mapped', subject: 'Column wins' }
+    const payload = buildIssuePayload(task, ctx({ mapping }), 'update')
+
+    expect(payload.subject).toBe('Column wins')
+  })
+
   it('resolves tracker names case-insensitively with trimming', () => {
     const mapping = defaultFieldMapping()
     mapping.extraFields = ['tracker']
@@ -345,6 +360,26 @@ describe('buildIssuePayload', () => {
     }), 'update')
 
     expect(payload.tracker_id).toBe(2)
+  })
+
+  it('resolves status, priority, and fixed_version names to ids', () => {
+    const mapping = defaultFieldMapping()
+    mapping.extraFields = ['status', 'priority', 'fixed_version']
+    const task: ITask = { id: 1, text: 'A', status: 'Closed', priority: 'High', fixed_version: 'v2.0' }
+    const payload = buildIssuePayload(task, ctx({
+      mapping,
+      remoteMeta: {
+        trackers: [],
+        statuses: [{ id: 5, name: 'Closed' }],
+        priorities: [{ id: 4, name: 'High' }],
+        versions: [{ id: 9, name: 'v2.0' }],
+        members: [],
+      },
+    }), 'update')
+
+    expect(payload.status_id).toBe(5)
+    expect(payload.priority_id).toBe(4)
+    expect(payload.fixed_version_id).toBe(9)
   })
 
   it('coerces done_ratio strings to the nearest step of 10 and clamps to 0-100', () => {
@@ -370,6 +405,32 @@ describe('buildIssuePayload', () => {
     }), 'update')
 
     expect(payload.assigned_to_id).toBe(8)
+  })
+
+  it('prefers the resource externalKey for assigned_to and falls back to members', () => {
+    const mapping = defaultFieldMapping()
+    mapping.extraFields = ['assigned_to']
+    const remoteMeta: PushContext['remoteMeta'] = {
+      trackers: [],
+      statuses: [],
+      priorities: [],
+      versions: [],
+      members: [{ id: 8, name: 'Bob' }],
+    }
+    // Numeric externalKey wins over the member-list match.
+    const byKey = buildIssuePayload({ id: 1, text: 'A', assigned_to: 'Bob' }, ctx({
+      mapping,
+      resources: [{ id: 5, label: 'Bob', externalSource: 'redmine', externalKey: '42' }],
+      remoteMeta,
+    }), 'update')
+    expect(byKey.assigned_to_id).toBe(42)
+    // Non-numeric externalKey falls back to the member list.
+    const byMember = buildIssuePayload({ id: 1, text: 'A', assigned_to: 'Bob' }, ctx({
+      mapping,
+      resources: [{ id: 5, label: 'Bob', externalSource: 'redmine', externalKey: 'not-a-number' }],
+      remoteMeta,
+    }), 'update')
+    expect(byMember.assigned_to_id).toBe(8)
   })
 
   it('skips parent and assignee resolution when mapping fields are unmapped', () => {

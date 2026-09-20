@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Gantt, Willow } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
 import { CsvImportDialog } from '@/components/csv-import-dialog'
@@ -68,6 +68,7 @@ export function GanttPage() {
     displayTasks,
     pendingDeleteTasks,
     displayLinks,
+    visibleRemoteFieldKeys,
   } = derived
   const { handleTaskSelection } = actions
   const handleColumnSelectTask = useCallback(
@@ -77,25 +78,30 @@ export function GanttPage() {
     [handleTaskSelection]
   )
 
-  const mappedRemoteKeys = new Set(
-    Object.values(integrationSettings.mapping.fields).filter((k): k is string => k !== null)
-  )
-  // assigned_to duplicates the Resource Names column
-  // description allowed: copied verbatim via extraFields so it can be shown as a column
-  const remoteColumnFields = (
-    integrationSettings.knownFields.length
-      ? integrationSettings.knownFields
-      : redmineStandardFields
-  )
-    .filter(
-      (f) =>
-        (!mappedRemoteKeys.has(f.key) || f.key === 'description') &&
-        !['assigned_to', 'assigned_to_id'].includes(f.key)
+  // assigned_to duplicates the Resource Names column.
+  // 'description' is allowed through the mapped-key filter: its column is
+  // unified on task.details (see use-gantt-columns) rather than extraFields.
+  const remoteColumnFields = useMemo(() => {
+    const mappedRemoteKeys = new Set(
+      Object.values(integrationSettings.mapping.fields).filter((k): k is string => k !== null)
     )
-    .map((f) => ({
-      ...f,
-      description: f.description ?? redmineStandardFields.find((s) => s.key === f.key)?.description,
-    }))
+    return (
+      integrationSettings.knownFields.length
+        ? integrationSettings.knownFields
+        : redmineStandardFields
+    )
+      .filter(
+        (f) =>
+          (!mappedRemoteKeys.has(f.key) || f.key === 'description') &&
+          !['assigned_to', 'assigned_to_id'].includes(f.key)
+      )
+      .map((f) => ({
+        ...f,
+        description: f.description ?? redmineStandardFields.find((s) => s.key === f.key)?.description,
+      }))
+  }, [integrationSettings])
+  // visibleRemoteFieldKeys (from the hook) already filters visibleRemoteColumns
+  // to displayable keys — the same set PushContext uses for write-back gating.
 
   const columns = useGanttColumns({
     tasks,
@@ -104,7 +110,7 @@ export function GanttPage() {
     calendarConfig,
     durationUnit,
     isWorkColumnVisible,
-    visibleRemoteColumns,
+    visibleRemoteColumns: visibleRemoteFieldKeys,
     remoteFields: remoteColumnFields,
     selectedTaskId,
     ganttApi: gantt.api,

@@ -37,6 +37,11 @@ export function loadIntegrationSettings(): IntegrationSettings {
         // per-key merge so SyncTaskFields added in later versions still
         // appear (mapped to defaults) on settings saved by older versions
         fields: { ...defaults.mapping.fields, ...parsed.mapping?.fields },
+        // 'description' is unified on task.details — never an extraField;
+        // prune it from settings persisted before that contract existed.
+        extraFields: (parsed.mapping?.extraFields ?? defaults.mapping.extraFields).filter(
+          (key) => key !== 'description'
+        ),
       },
     }
   } catch {

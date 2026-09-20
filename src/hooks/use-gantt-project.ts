@@ -53,16 +53,6 @@ function mergeRedmineMembers(
   return next
 }
 
-/** Replace the resource list with Redmine members; member id becomes the resource id. */
-function redmineMembersToResources(members: Array<{ id: number; name: string }>): GanttResource[] {
-  return members.map((member) => ({
-    id: member.id,
-    label: member.name,
-    externalSource: 'redmine',
-    externalKey: String(member.id),
-  }))
-}
-
 const scalePresets: Record<string, IScaleConfig[]> = {
   hour: [{ unit: 'day', step: 1, format: '%j %F %Y' }, { unit: 'hour', step: 2, format: '%H:00' }],
   day: [{ unit: 'month', step: 1, format: '%F %Y' }, { unit: 'day', step: 1, format: '%j' }],
@@ -977,6 +967,7 @@ export function useGanttProject() {
       setLinks(result.links)
       setSelectedTaskId(null)
       setSelectedTaskIds([])
+      setPendingDeleteIds(null)
       setCsvImportData(null)
     },
     [calendarConfig, csvImportData, durationUnit, isAutoSchedule, resourceList]
@@ -1001,6 +992,7 @@ export function useGanttProject() {
       setLinks(result.links)
       setSelectedTaskId(null)
       setSelectedTaskIds([])
+      setPendingDeleteIds(null)
       setClipboardImportData(null)
     },
     [calendarConfig, clipboardImportData, durationUnit, isAutoSchedule, links, resourceList, tasks]
@@ -1115,6 +1107,7 @@ export function useGanttProject() {
     setLinks(initialLinks)
     setSelectedTaskId(null)
     setSelectedTaskIds([])
+    setPendingDeleteIds(null)
     setResourceList(sampleResources)
   }, [calendarConfig, durationUnit, isAutoSchedule])
 
@@ -1161,9 +1154,11 @@ export function useGanttProject() {
 
   const handleAddRemoteColumn = useCallback((field: RemoteFieldDescriptor) => {
     setVisibleRemoteColumns((prev) => (prev.includes(field.key) ? prev : [...prev, field.key]))
-    // Ensure the remote key is copied onto tasks on the next Get.
+    // Ensure the remote key is copied onto tasks on the next Get. 'description'
+    // is excluded: its column reads/writes task.details directly (canonical
+    // field), so a verbatim copy would create a divergent duplicate.
     setIntegrationSettings((prev) => {
-      if (prev.mapping.extraFields.includes(field.key)) return prev
+      if (field.key === 'description' || prev.mapping.extraFields.includes(field.key)) return prev
       const next: IntegrationSettings = {
         ...prev,
         mapping: { ...prev.mapping, extraFields: [...prev.mapping.extraFields, field.key] },
@@ -1255,6 +1250,7 @@ export function useGanttProject() {
       setLinks(result.links)
       setSelectedTaskId(null)
       setSelectedTaskIds([])
+      setPendingDeleteIds(null)
       toast.success(`Redmine get complete: ${result.inserted} inserted, ${result.updated} updated.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -1273,6 +1269,10 @@ export function useGanttProject() {
   }, [links, performRedmineGet, tasks])
 
   const handleRedmineGetClear = useCallback(() => {
+    if (busyRef.current) {
+      toast.info('Another Redmine operation is in progress.')
+      return
+    }
     setIsRedmineGetDialogOpen(false)
     setSelectedTaskId(null)
     setSelectedTaskIds([])
@@ -1280,10 +1280,35 @@ export function useGanttProject() {
   }, [performRedmineGet])
 
   const handleRedmineGetUpsert = useCallback(() => {
+    if (busyRef.current) {
+      toast.info('Another Redmine operation is in progress.')
+      return
+    }
     setIsRedmineGetDialogOpen(false)
     void performRedmineGet(tasks, links)
   }, [links, performRedmineGet, tasks])
 
+  // Remote keys whose columns are actually displayable: visibleRemoteColumns
+  // minus keys that are mapped (a mapped key's column vanishes from the grid
+  // but would otherwise keep driving extraFields write-back invisibly).
+  // 'description' is exempt — its column is unified on task.details.
+  const visibleRemoteFieldKeys = useMemo(() => {
+    const mappedRemoteKeys = new Set(
+      Object.values(integrationSettings.mapping.fields).filter((k): k is string => k !== null)
+    )
+    const knownKeys = new Set(
+      (integrationSettings.knownFields.length ? integrationSettings.knownFields : redmineStandardFields).map(
+        (f) => f.key
+      )
+    )
+    return visibleRemoteColumns.filter(
+      (key) =>
+        knownKeys.has(key) &&
+        (!mappedRemoteKeys.has(key) || key === 'description') &&
+        key !== 'assigned_to' &&
+        key !== 'assigned_to_id'
+    )
+  }, [integrationSettings, visibleRemoteColumns])
   const handleRedminePushNew = useCallback(async () => {
     if (busyRef.current) return
     const candidates = unlinkedTasks(tasks, 'redmine')
@@ -1293,6 +1318,7 @@ export function useGanttProject() {
     }
     busyRef.current = true
     setIntegrationBusy('push')
+    const pushed = new Map<string, string>()
     try {
       const settings = integrationSettings
       const provider = createProvider(settings)
@@ -1310,33 +1336,37 @@ export function useGanttProject() {
           versions: settings.knownVersions,
           members: settings.knownMembers,
         },
-        visibleRemoteColumns,
+        visibleRemoteColumns: visibleRemoteFieldKeys,
         workingHoursPerDay: calendarConfig.workingHoursPerDay,
         durationUnit,
       }
       // Sequential in array order: locally-created parents precede children, so
       // the live keyByTaskId map resolves same-batch parent_issue_id values.
-      const pushed = new Map<string, string>()
       for (const task of candidates) {
         const key = await provider.createIssue(task, ctx)
         ctx.keyByTaskId.set(String(task.id), key)
         pushed.set(String(task.id), key)
       }
-      setTasks(
-        tasks.map((task) =>
-          pushed.has(String(task.id))
-            ? { ...task, externalSource: 'redmine', externalKey: pushed.get(String(task.id)) }
-            : task
-        )
-      )
       toast.success(`Redmine push complete: ${pushed.size} issue(s) created.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
+      // Write back keys for issues created before any mid-loop failure so a
+      // retry does not duplicate them; functional update preserves edits made
+      // to other tasks while the async loop was running.
+      if (pushed.size > 0) {
+        setTasks((prev) =>
+          prev.map((task) =>
+            pushed.has(String(task.id))
+              ? { ...task, externalSource: 'redmine', externalKey: pushed.get(String(task.id)) }
+              : task
+          )
+        )
+      }
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, visibleRemoteColumns])
+  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, visibleRemoteFieldKeys])
 
   const handleRedmineSync = useCallback(async () => {
     if (busyRef.current) return
@@ -1364,7 +1394,7 @@ export function useGanttProject() {
           versions: settings.knownVersions,
           members: settings.knownMembers,
         },
-        visibleRemoteColumns,
+        visibleRemoteColumns: visibleRemoteFieldKeys,
         workingHoursPerDay: calendarConfig.workingHoursPerDay,
         durationUnit,
       }
@@ -1389,7 +1419,7 @@ export function useGanttProject() {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, visibleRemoteColumns])
+  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, visibleRemoteFieldKeys])
 
   const handleRedmineFetchMetadata = useCallback(async () => {
     if (busyRef.current) return
@@ -1409,18 +1439,7 @@ export function useGanttProject() {
       }
       setIntegrationSettings(merged)
       saveIntegrationSettings(merged)
-      const nextResources = redmineMembersToResources(meta.members)
-      setResourceList(nextResources)
-      const validIds = new Set(nextResources.map((r) => r.id))
-      setTasks((prev) =>
-        prev.map((task) => {
-          const res = (task as TaskWithResources).resources
-          if (!res || res.length === 0) return task
-          const kept = res.filter((id) => validIds.has(id))
-          if (kept.length === res.length) return task
-          return kept.length > 0 ? { ...task, resources: kept } : { ...task, resources: undefined }
-        })
-      )
+      upsertRedmineMembers(meta.members)
       toast.info(
         `Project info: ${meta.members.length} members, ${meta.fields.length} fields, ${meta.trackers.length} trackers.`
       )
@@ -1430,7 +1449,8 @@ export function useGanttProject() {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [integrationSettings])
+  }, [integrationSettings, upsertRedmineMembers])
+
   const totalTasks = tasks.filter((t) => t.type !== 'summary').length
   const summaryTasks = tasks.filter((t) => t.type === 'summary').length
   const completedTasks = tasks.filter((t) => t.progress === 100).length
@@ -1464,7 +1484,7 @@ export function useGanttProject() {
 
   return {
     state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, visibleRemoteColumns, setVisibleRemoteColumns, integrationSettings, setIntegrationSettings, isIntegrationDialogOpen, setIsIntegrationDialogOpen, isRedmineGetDialogOpen, setIsRedmineGetDialogOpen, integrationBusy, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, pendingDeleteIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
-    derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink, pendingDeleteTasks, displayTasks, displayLinks },
+    derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink, pendingDeleteTasks, displayTasks, displayLinks, visibleRemoteFieldKeys },
     actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleRequestDeleteSelectedTasks, handleConfirmDeleteTasks, handleCancelDeleteTasks, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn, handleAddRemoteColumn, handleSaveIntegrationSettings, handleTestIntegrationConnection, handleFetchIntegrationMetadata, handleRedmineGet, handleRedmineGetClear, handleRedmineGetUpsert, handleRedminePushNew, handleRedmineSync, handleRedmineFetchMetadata },
     gantt: { api, ganttResources, scalePresets },
     fileInputRef,

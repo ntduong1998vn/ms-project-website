@@ -68,7 +68,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
 
   async function testConnection(): Promise<string> {
     const json = await request<RedmineUserResponse>('/users/current.json')
-    const login = json.user?.login
+    const login = json?.user?.login
     if (!login) throw new Error('Redmine did not return the current user.')
     return login
   }
@@ -78,10 +78,10 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     let offset = 0
     for (;;) {
       const json = await request<RedmineIssuesResponse>(issuesPath(offset))
-      const page = json.issues ?? []
+      const page = json?.issues ?? []
       for (const issue of page) issues.push(flattenRedmineIssue(issue))
       offset += page.length
-      if (offset >= (json.total_count ?? 0) || page.length === 0) break
+      if (offset >= (json?.total_count ?? 0) || page.length === 0) break
     }
     return issues
   }
@@ -94,7 +94,9 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
       method: 'POST',
       body: JSON.stringify({ issue }),
     })
-    return String(json.issue.id)
+    const issueId = json?.issue?.id
+    if (issueId == null) throw new Error('Redmine did not return the created issue.')
+    return String(issueId)
   }
 
   async function updateIssue(key: string, task: ITask, ctx: PushContext): Promise<void> {
@@ -110,7 +112,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     try {
       const json = await request<RedmineIssuesResponse>(issuesPath(0))
       const byId = new Map<number, RemoteFieldDescriptor>()
-      for (const issue of json.issues ?? []) {
+      for (const issue of json?.issues ?? []) {
         for (const cf of issue.custom_fields ?? []) {
           const existing = byId.get(cf.id)
           if (!existing) {
@@ -139,17 +141,18 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
         ? request<RedmineProjectResponse>(
             `/projects/${encodeURIComponent(projectId)}.json?include=trackers`
           )
-            .then((j) => j.project?.trackers ?? [])
+            .then((j) => j?.project?.trackers ?? [])
             .catch(() => [] as RedmineTracker[])
         : Promise.resolve([] as RedmineTracker[]),
       projectId
         ? request<RedmineMembershipsResponse>(
-            `/projects/${encodeURIComponent(projectId)}/memberships.json`
+            // Redmine's max page size; projects with >100 members truncate (no pagination loop in v1)
+            `/projects/${encodeURIComponent(projectId)}/memberships.json?limit=${PAGE_LIMIT}`
           )
             .then((j) => {
               // Memberships include groups — keep only real users
               const users: Array<{ id: number; name: string }> = []
-              for (const m of j.memberships ?? []) {
+              for (const m of j?.memberships ?? []) {
                 if (m.user != null) users.push({ id: m.user.id, name: m.user.name })
               }
               return users
@@ -157,16 +160,16 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
             .catch(() => [] as Array<{ id: number; name: string }>)
         : Promise.resolve([] as Array<{ id: number; name: string }>),
       request<RedmineIssueStatusesResponse>('/issue_statuses.json')
-        .then((j) => j.issue_statuses ?? [])
+        .then((j) => j?.issue_statuses ?? [])
         .catch(() => [] as RedmineNamedEntity[]),
       request<RedmineIssuePrioritiesResponse>('/enumerations/issue_priorities.json')
-        .then((j) => j.issue_priorities ?? [])
+        .then((j) => j?.issue_priorities ?? [])
         .catch(() => [] as RedmineNamedEntity[]),
       projectId
         ? request<RedmineVersionsResponse>(
             `/projects/${encodeURIComponent(projectId)}/versions.json`
           )
-            .then((j) => j.versions ?? [])
+            .then((j) => j?.versions ?? [])
             .catch(() => [] as RedmineNamedEntity[])
         : Promise.resolve([] as RedmineNamedEntity[]),
       // null distinguishes "request failed" from "no custom fields" — only the
@@ -195,26 +198,30 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
 
     const cfDescriptors =
       customFields !== null
-        ? customFields.map((cf): RemoteFieldDescriptor => {
-            const options =
-              cf.field_format === 'user'
-                ? memberIdOptions
-                : cf.field_format === 'version'
-                  ? versions.map((v) => ({ id: String(v.id), label: v.name }))
-                  : cf.possible_values?.map((pv) => ({
-                      id: pv.value,
-                      label: pv.label ?? pv.value,
-                    }))
-            return {
-              key: `cf_${cf.id}`,
-              label: `${cf.name} (custom)`,
-              description: cf.description,
-              kind: 'custom',
-              valueType: 'string',
-              multiple: cf.multiple === true || cf.multiple === '1',
-              options,
-            }
-          })
+        ? customFields
+            // /custom_fields.json returns every customized_type; keep issue fields
+            // (missing customized_type = issue on older Redmine)
+            .filter((cf) => cf.customized_type == null || cf.customized_type === 'issue')
+            .map((cf): RemoteFieldDescriptor => {
+              const options =
+                cf.field_format === 'user'
+                  ? memberIdOptions
+                  : cf.field_format === 'version'
+                    ? versions.map((v) => ({ id: String(v.id), label: v.name }))
+                    : cf.possible_values?.map((pv) => ({
+                        id: pv.value,
+                        label: pv.label ?? pv.value,
+                      }))
+              return {
+                key: `cf_${cf.id}`,
+                label: `${cf.name} (custom)`,
+                description: cf.description,
+                kind: 'custom',
+                valueType: 'string',
+                multiple: cf.multiple === true || cf.multiple === '1',
+                options,
+              }
+            })
         : await harvestCustomFieldDescriptors()
 
     return {

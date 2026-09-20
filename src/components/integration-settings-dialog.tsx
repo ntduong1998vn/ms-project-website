@@ -87,9 +87,13 @@ function IntegrationSettingsContent({
   const [testState, setTestState] = useState<TestState>({ kind: 'idle' })
   const [metaBusy, setMetaBusy] = useState(false)
   const [metaError, setMetaError] = useState('')
+  const [mappingError, setMappingError] = useState('')
 
   const fieldOptions = draft.knownFields.length ? draft.knownFields : redmineStandardFields
   const customFields = fieldOptions.filter((f) => f.kind === 'custom')
+  const otherExtraFields = draft.mapping.extraFields.filter(
+    (k) => !customFields.some((f) => f.key === k),
+  )
   const hasMetadata =
     draft.knownFields.length > 0 ||
     draft.knownTrackers.length > 0 ||
@@ -97,6 +101,12 @@ function IntegrationSettingsContent({
     draft.knownPriorities.length > 0 ||
     draft.knownVersions.length > 0 ||
     draft.knownMembers.length > 0
+
+  const updateConnection = (patch: Partial<IntegrationSettings>) => {
+    setDraft((d) => ({ ...d, ...patch }))
+    setTestState({ kind: 'idle' })
+    setMetaError('')
+  }
 
   const setFieldMapping = (taskField: SyncTaskField, remoteKey: string | null) => {
     setDraft((d) => ({
@@ -106,6 +116,9 @@ function IntegrationSettingsContent({
         fields: { ...d.mapping.fields, [taskField]: remoteKey },
       },
     }))
+    if (taskField === 'text' && remoteKey !== null) {
+      setMappingError('')
+    }
   }
 
   const toggleExtraField = (key: string) => {
@@ -158,6 +171,10 @@ function IntegrationSettingsContent({
   }
 
   const handleSave = () => {
+    if (draft.mapping.fields.text === null) {
+      setMappingError('Task Name is required — map it to a remote field before saving')
+      return
+    }
     onSave(draft)
     onClose()
   }
@@ -192,10 +209,10 @@ function IntegrationSettingsContent({
       <div className="mt-4 space-y-5">
         {/* Section 1: Connection */}
         <div className="rounded-lg border border-border bg-muted/20 p-3.5">
-          <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground mb-3">
             <Link2 className="h-4 w-4 text-blue-500" />
             <span>Connection</span>
-          </label>
+          </div>
           <div className="space-y-3">
             <div>
               <label
@@ -209,7 +226,7 @@ function IntegrationSettingsContent({
                 type="text"
                 placeholder="https://redmine.example.com"
                 value={draft.baseUrl}
-                onChange={(e) => setDraft((d) => ({ ...d, baseUrl: e.target.value }))}
+                onChange={(e) => updateConnection({ baseUrl: e.target.value })}
                 className={inputClass}
               />
             </div>
@@ -224,7 +241,7 @@ function IntegrationSettingsContent({
                 id="redmineApiKey"
                 type="password"
                 value={draft.apiKey}
-                onChange={(e) => setDraft((d) => ({ ...d, apiKey: e.target.value }))}
+                onChange={(e) => updateConnection({ apiKey: e.target.value })}
                 className={inputClass}
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
@@ -244,7 +261,7 @@ function IntegrationSettingsContent({
                 placeholder="my-project (empty = all visible issues)"
                 value={draft.projectIdentifier}
                 onChange={(e) =>
-                  setDraft((d) => ({ ...d, projectIdentifier: e.target.value }))
+                  updateConnection({ projectIdentifier: e.target.value })
                 }
                 className={inputClass}
               />
@@ -255,7 +272,7 @@ function IntegrationSettingsContent({
                   type="checkbox"
                   checked={draft.useDevProxy}
                   onChange={(e) =>
-                    setDraft((d) => ({ ...d, useDevProxy: e.target.checked }))
+                    updateConnection({ useDevProxy: e.target.checked })
                   }
                   className="h-4 w-4 accent-primary"
                 />
@@ -316,10 +333,10 @@ function IntegrationSettingsContent({
 
         {/* Section 2: Project metadata review */}
         <div className="rounded-lg border border-border bg-muted/20 p-3.5">
-          <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-2">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground mb-2">
             <ListChecks className="h-4 w-4 text-emerald-500" />
             <span>Project Metadata</span>
-          </label>
+          </div>
           {!hasMetadata ? (
             <p className="text-xs text-muted-foreground">
               No metadata loaded — use Fetch project info
@@ -345,6 +362,12 @@ function IntegrationSettingsContent({
                   className={inputClass}
                 >
                   <option value="">Server default</option>
+                  {draft.trackerId !== null &&
+                    !draft.knownTrackers.some((t) => t.id === draft.trackerId) && (
+                      <option value={String(draft.trackerId)}>
+                        #{draft.trackerId} (not on server)
+                      </option>
+                    )}
                   {draft.knownTrackers.map((t) => (
                     <option key={t.id} value={String(t.id)}>
                       {t.name} ({t.id})
@@ -382,10 +405,10 @@ function IntegrationSettingsContent({
 
         {/* Section 3: Field mapping */}
         <div className="rounded-lg border border-border bg-muted/20 p-3.5">
-          <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-2">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground mb-2">
             <ArrowLeftRight className="h-4 w-4 text-violet-500" />
             <span>Field Mapping</span>
-          </label>
+          </div>
           <p className="text-xs text-muted-foreground mb-3">
             Choose which remote field each task field syncs with:
           </p>
@@ -401,6 +424,7 @@ function IntegrationSettingsContent({
                     {f.required && <span className="text-destructive"> *</span>}
                   </span>
                   <select
+                    aria-label={f.label}
                     value={current ?? ''}
                     onChange={(e) =>
                       setFieldMapping(f.key, e.target.value === '' ? null : e.target.value)
@@ -421,6 +445,11 @@ function IntegrationSettingsContent({
               )
             })}
           </div>
+          {mappingError && (
+            <p className="mt-2 text-xs font-medium text-destructive">
+              {mappingError}
+            </p>
+          )}
           <div className="mt-4">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">
               Additional fields to import
@@ -445,6 +474,27 @@ function IntegrationSettingsContent({
                     <span>{f.label}</span>
                   </label>
                 ))}
+              </div>
+            )}
+            {otherExtraFields.length > 0 && (
+              <div className="mt-1.5 space-y-1">
+                {otherExtraFields.map((key) => {
+                  const known = fieldOptions.find((f) => f.key === key)
+                  return (
+                    <label
+                      key={key}
+                      className="flex items-center gap-2 text-xs text-foreground cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked
+                        onChange={() => toggleExtraField(key)}
+                        className="h-3.5 w-3.5 accent-primary"
+                      />
+                      <span>{known ? known.label : `${key} (not on server)`}</span>
+                    </label>
+                  )
+                })}
               </div>
             )}
           </div>

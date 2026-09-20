@@ -43,18 +43,18 @@ export function TaskInfoPanel({
   const taskId = task.id
   const taskResources = new Set((task as TaskWithResources).resources ?? [])
   const description =
-    typeof task.details === 'string' && task.details.trim() !== ''
-      ? task.details
+    task.details !== undefined
+      ? String(task.details ?? '')
       : typeof (task as Record<string, unknown>).description === 'string'
         ? String((task as Record<string, unknown>).description)
         : ''
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
       if (
         target?.closest?.(
-          'input, textarea, select, [contenteditable], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]'
+          'input, textarea, select, [contenteditable], [role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper]'
         )
       ) {
         return

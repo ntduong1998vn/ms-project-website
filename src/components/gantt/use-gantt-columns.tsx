@@ -280,7 +280,10 @@ export function useGanttColumns({
         .map((field) => {
           const options = field.options
           return {
-            id: field.key,
+            // 'description' is unified on task.details: the gantt's update-cell
+            // intercept writes task[column.id] directly (column setters are
+            // dropped by normalizeColumns), so the column id must be 'details'.
+            id: field.key === 'description' ? 'details' : field.key,
             header: headerCell(field.label, { sortable: true }),
             width: 110,
             align: 'center' as const,
@@ -288,20 +291,17 @@ export function useGanttColumns({
             // Enumerated fields get a dropdown editor. Options must live in
             // editor.config.options, NOT column.options: grid-store builds an
             // optionsMap from column.options and maps the getter result through
-            // it for display, which would blank cells since our getter already
-            // returns the label.
+            // it, which would double-map since labels are resolved by the cell.
             editor: options?.length
               ? { type: 'richselect' as const, config: { options } }
               : ('text' as const),
-            getter: (task: ITask) => {
-              const raw = (task as Record<string, unknown>)[field.key] as
-                | string
-                | number
-                | undefined
-              if (!options?.length || raw == null) return raw
-              const match = options.find((o) => String(o.id) === String(raw))
-              return match?.label ?? raw
-            },
+            // Raw stored value — the richselect editor seeds itself from the
+            // getter and writes back an option id; labels are display-only via
+            // the cell below.
+            getter: (task: ITask) => remoteFieldRawValue(task, field),
+            cell: (({ row }: { row: ITask }) => (
+              <RemoteFieldCell row={row} field={field} />
+            )) as unknown as IColumnConfig['cell'],
           }
         })
       if (remoteColumns.length > 0) {
@@ -331,4 +331,44 @@ export function useGanttColumns({
       visibleRemoteColumns,
     ]
   )
+}
+
+// Remote-column values are stored raw on the task: option ids for enumerated
+// fields, '; '-joined strings for multi-value custom fields, and
+// Array<{ key, delay }> for 'successors'.
+function remoteFieldRawValue(task: ITask, field: RemoteFieldDescriptor): unknown {
+  // 'description' is unified on task.details (the canonical mapped field).
+  return field.key === 'description'
+    ? task.details
+    : (task as Record<string, unknown>)[field.key]
+}
+
+function formatRemoteFieldValue(raw: unknown, field: RemoteFieldDescriptor): string {
+  if (raw == null || raw === '') return ''
+  const resolve = (value: unknown): string => {
+    const match = field.options?.find((o) => String(o.id) === String(value))
+    return match?.label ?? String(value)
+  }
+  if (Array.isArray(raw)) {
+    // 'successors' stores relation rows — render "key (+delay)", never
+    // "[object Object]".
+    return raw
+      .map((entry) => {
+        if (entry !== null && typeof entry === 'object' && 'key' in entry) {
+          const relation = entry as { key: unknown; delay?: unknown }
+          const delay = typeof relation.delay === 'number' ? relation.delay : 0
+          return `${relation.key} (+${delay})`
+        }
+        return resolve(entry)
+      })
+      .join(', ')
+  }
+  if (field.multiple && typeof raw === 'string') {
+    return raw.split('; ').map(resolve).join('; ')
+  }
+  return resolve(raw)
+}
+
+function RemoteFieldCell({ row, field }: { row: ITask; field: RemoteFieldDescriptor }) {
+  return <>{formatRemoteFieldValue(remoteFieldRawValue(row, field), field)}</>
 }

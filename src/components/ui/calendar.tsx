@@ -1,5 +1,3 @@
-"use client"
-
 import * as React from "react"
 import { cn } from "cn"
 import {
@@ -164,7 +162,7 @@ function Calendar({
         DayButton: ({ ...props }) => (
           <CalendarDayButton locale={locale} {...props} />
         ),
-        WeekNumber: ({ children, ...props }) => {
+        WeekNumber: ({ children, week: _week, ...props }) => {
           return (
             <td {...props}>
               <div className="flex size-(--cell-size) items-center justify-center text-center">
