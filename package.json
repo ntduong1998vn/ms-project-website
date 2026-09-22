@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "gen:sample": "node scripts/generate-sample-csv.mjs",
     "test:coverage": "vitest run --coverage",
     "prepare": "if [ -d .git ]; then git config core.hooksPath .githooks; fi"
   },
