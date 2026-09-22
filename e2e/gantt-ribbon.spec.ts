@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { seedSampleProject } from './seed'
 
 /**
  * SVAR gantt grid DOM notes (for future maintenance):
@@ -44,6 +45,8 @@ async function indentPx(row: Locator): Promise<number> {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
+  await seedSampleProject(page)
+  await page.reload()
   // Wait until the gantt grid has rendered its task rows.
   await expect(gridRows(page).first()).toBeVisible()
 })
@@ -168,6 +171,9 @@ test('Delete Task removes the selected row', async ({ page }) => {
   const deleteTask = ribbonButton(page, 'Delete Task')
   await expect(deleteTask).toBeEnabled()
   await deleteTask.click()
+
+  // Deletion is gated behind a confirmation dialog.
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete Task', exact: true }).click()
 
   await expect(rowByName(page, 'Production Deployment')).toHaveCount(0)
   await expect(gridRows(page).first()).toBeVisible()
