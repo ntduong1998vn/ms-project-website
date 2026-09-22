@@ -10,11 +10,11 @@ import {
   PredecessorCell,
   ResourceNamesCell,
   StartDateCell,
+  TaskIdCell,
   WorkCell,
 } from '@/components/gantt/gantt-cells'
 import { ColumnFilterHeader } from '@/components/gantt/column-filter-header'
 import { getResourceEffortWarnings } from '@/lib/resource-effort'
-import { sameTaskId } from '@/lib/task-helpers'
 import { collectDistinctOptions, taskTextFilter, workHours } from '@/lib/gantt-filters'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
@@ -29,7 +29,6 @@ export type UseGanttColumnsOptions = {
   isWorkColumnVisible: boolean
   visibleRemoteColumns: string[]
   remoteFields: RemoteFieldDescriptor[]
-  selectedTaskId: string | number | null
   ganttApi: IApi | null
   onSelectTask: (id: string | number) => void
   onDurationChange: (id: string | number, duration: number) => void
@@ -48,7 +47,6 @@ export function useGanttColumns({
   isWorkColumnVisible,
   visibleRemoteColumns,
   remoteFields,
-  selectedTaskId,
   ganttApi,
   onSelectTask,
   onDurationChange,
@@ -125,23 +123,7 @@ export function useGanttColumns({
           width: 50,
           align: 'center',
           sort: true,
-          cell: (({ row }: { row: TaskWithResources }) => (
-            <span
-              onClick={() => onSelectTask(row.id)}
-              style={{
-                fontWeight: 600,
-                fontSize: '0.82rem',
-                color: selectedTaskId != null && sameTaskId(selectedTaskId, row.id) ? '#107c41' : '#6b7280',
-                display: 'inline-block',
-                width: '100%',
-                textAlign: 'center',
-                fontVariantNumeric: 'tabular-nums',
-                cursor: 'pointer',
-              }}
-            >
-              {row.id}
-            </span>
-          )) as unknown as IColumnConfig['cell'],
+          cell: TaskIdCell as unknown as IColumnConfig['cell'],
         },
         {
           id: 'text',
@@ -324,7 +306,6 @@ export function useGanttColumns({
       onFinishDateChange,
       onStartDateChange,
       resources,
-      selectedTaskId,
       tasks,
       warningsByTask,
       remoteFields,
