@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Gantt, Willow } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
 import { CsvImportDialog } from '@/components/csv-import-dialog'
@@ -14,6 +14,7 @@ import { GanttRibbon } from '@/components/gantt/gantt-ribbon'
 import { ResourcesPanel } from '@/components/gantt/resources-panel'
 import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
 import { useGanttColumns } from '@/components/gantt/use-gantt-columns'
+import { GanttCellContext, type EditingCell } from '@/components/gantt/gantt-cell-context'
 import { useGanttProject } from '@/hooks/use-gantt-project'
 import { ResourceUsageView, TaskUsageView } from '@/components/gantt/usage-views'
 import { redmineStandardFields } from '@/lib/integrations/redmine/fields'
@@ -77,6 +78,18 @@ export function GanttPage() {
     },
     [handleTaskSelection]
   )
+  // Which date cell currently owns the picker. Kept above the grid so a
+  // virtualisation remount cannot silently close it.
+  const [editingCell, setEditingCell] = useState<EditingCell | null>(null)
+  const cellContext = useMemo(
+    () => ({
+      selectedTaskId,
+      editingCell,
+      onSelectTask: handleColumnSelectTask,
+      onEditCell: setEditingCell,
+    }),
+    [editingCell, handleColumnSelectTask, selectedTaskId]
+  )
 
   // assigned_to duplicates the Resource Names column.
   // 'description' is allowed through the mapped-key filter: its column is
@@ -112,7 +125,6 @@ export function GanttPage() {
     isWorkColumnVisible,
     visibleRemoteColumns: visibleRemoteFieldKeys,
     remoteFields: remoteColumnFields,
-    selectedTaskId,
     ganttApi: gantt.api,
     onSelectTask: handleColumnSelectTask,
     onDurationChange: actions.handleDurationChange,
@@ -245,33 +257,35 @@ export function GanttPage() {
       ) : (
         <div className="relative flex h-full min-h-0 w-full">
           <div className="min-w-0 flex-1">
-            <Willow>
-              <Gantt
-                init={actions.handleInit}
-                displayMode={isGanttVisible ? 'all' : 'grid'}
-                tasks={gantt.api ? displayTasks : []}
-                links={displayLinks}
-                criticalPath={showCriticalPath ? { type: 'strict' } : null}
-                resources={gantt.ganttResources}
-                scales={gantt.scalePresets[zoom]}
-                columns={columns}
-                gridWidth={920}
-                durationUnit={durationUnit}
-                cellHeight={35}
-                scaleHeight={30}
-                cellWidth={zoom === 'hour' ? 60 : 100}
-                highlightTime={actions.handleHighlightTime}
-                onSelectTask={actions.handleTaskSelection}
-                selected={selectedTaskIds}
-                onUpdateTask={actions.handleUpdateTask}
-                onAddTask={actions.handleAddTask}
-                onMoveTask={actions.handleMoveTask}
-                onDeleteTask={actions.handleDeleteTask}
-                onAddLink={actions.handleAddLink}
-                onUpdateLink={actions.handleUpdateLink}
-                onDeleteLink={actions.handleDeleteLink}
-              />
-            </Willow>
+            <GanttCellContext value={cellContext}>
+              <Willow>
+                <Gantt
+                  init={actions.handleInit}
+                  displayMode={isGanttVisible ? 'all' : 'grid'}
+                  tasks={gantt.api ? displayTasks : []}
+                  links={displayLinks}
+                  criticalPath={showCriticalPath ? { type: 'strict' } : null}
+                  resources={gantt.ganttResources}
+                  scales={gantt.scalePresets[zoom]}
+                  columns={columns}
+                  gridWidth={920}
+                  durationUnit={durationUnit}
+                  cellHeight={35}
+                  scaleHeight={30}
+                  cellWidth={zoom === 'hour' ? 60 : 100}
+                  highlightTime={actions.handleHighlightTime}
+                  onSelectTask={actions.handleTaskSelection}
+                  selected={selectedTaskIds}
+                  onUpdateTask={actions.handleUpdateTask}
+                  onAddTask={actions.handleAddTask}
+                  onMoveTask={actions.handleMoveTask}
+                  onDeleteTask={actions.handleDeleteTask}
+                  onAddLink={actions.handleAddLink}
+                  onUpdateLink={actions.handleUpdateLink}
+                  onDeleteLink={actions.handleDeleteLink}
+                />
+              </Willow>
+            </GanttCellContext>
           </div>
           {selectedTask && (
             <TaskInfoPanel
@@ -292,7 +306,7 @@ export function GanttPage() {
         </div>
       )}
       <CsvImportDialog
-        key={csvImportData ? `${csvImportData.fileName}:${csvImportData.headers.join('|')}` : 'empty'}
+        key={csvImportData ? `csv:${csvImportData.fileName}:${csvImportData.headers.join('|')}` : 'csv:empty'}
         data={csvImportData}
         open={csvImportData !== null}
         onOpenChange={(open) => {
@@ -301,7 +315,7 @@ export function GanttPage() {
         onConfirm={actions.handleImportCsv}
       />
       <ClipboardImportDialog
-        key={clipboardImportData ? 'paste' : 'empty'}
+        key={clipboardImportData ? 'paste' : 'paste:empty'}
         data={clipboardImportData}
         open={clipboardImportData !== null}
         existingTaskIds={tasks.map((task) => task.id).filter((id): id is string | number => id !== undefined)}

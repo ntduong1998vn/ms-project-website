@@ -2,7 +2,7 @@ import type { ILink, ITask } from '@svar-ui/react-gantt'
 import type { CsvImportData, CsvTaskMapping } from '@/types/gantt-csv'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 import { csvValue, parseCsvDateValue, parseCsvDependencyType, parseCsvResourceTokens } from '@/lib/gantt-csv'
-import { autoScheduleTasks, calculateEndDate, getNextWorkingDay, type ProjectCalendarConfig } from '@/lib/scheduler'
+import { autoScheduleTasks, calculateEndDate, clampImportedDuration, getNextWorkingDay, isSchedulableEnd, type ProjectCalendarConfig } from '@/lib/scheduler'
 import { getNextNumericTaskId, hasParentCycle, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
 
 export type GanttPasteResult =
@@ -133,12 +133,12 @@ export function applyGanttPaste(
       type === 'milestone'
         ? 0
         : Number.isFinite(parsedDuration) && parsedDuration >= 0
-          ? parsedDuration
+          ? clampImportedDuration(parsedDuration, calendarConfig, durationUnit)
           : (matched?.duration ?? 1)
     const end =
       type === 'milestone'
         ? start
-        : parsedEnd && parsedEnd.getTime() >= start.getTime()
+        : parsedEnd && parsedEnd.getTime() >= start.getTime() && isSchedulableEnd(start, parsedEnd)
           ? parsedEnd
           : calculateEndDate(start, duration, calendarConfig, durationUnit)
     const parent = parents.get(String(id))
@@ -155,7 +155,10 @@ export function applyGanttPaste(
         duration,
         progress,
         type,
-        open: type === 'summary' || parentIds.has(String(id)),
+        // Only a row that actually has children may be open: SVAR's tree walk
+        // recurses into `data` whenever `open === true`, and a childless summary
+        // has `data === null`, which throws and takes the whole view down.
+        open: parentIds.has(String(id)),
         ...(parent !== undefined ? { parent } : {}),
         ...(resources.length > 0 ? { resources } : {}),
       })

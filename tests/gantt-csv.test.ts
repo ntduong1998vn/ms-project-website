@@ -189,3 +189,26 @@ describe('importGanttCsv', () => {
     expect(result.resources.map((r) => r.id)).toContain(2)
   })
 })
+
+describe('importGanttCsv tree flags', () => {
+  it('leaves a childless summary closed so the tree walk has nothing to recurse into', () => {
+    const result = importGanttCsv(
+      csvData([
+        ['1', 'Phase with children', '2026-09-01', '', '1', 'summary', '0', '', '', '', ''],
+        ['2', 'Child task', '2026-09-01', '', '2', 'task', '0', '1', '', '', ''],
+        ['3', 'Empty phase', '2026-09-07', '', '1', 'summary', '0', '', '', '', ''],
+      ]),
+      mapping,
+      defaultCalendarConfig,
+      'day',
+      false,
+      resources
+    )
+
+    expect(result.kind).toBe('success')
+    if (result.kind !== 'success') return
+    const byId = new Map(result.tasks.map((t) => [String(t.id), t]))
+    expect(byId.get('1')?.open).toBe(true)
+    expect(byId.get('3')?.open).toBe(false)
+  })
+})

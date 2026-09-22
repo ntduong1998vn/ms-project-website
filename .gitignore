@@ -7,6 +7,9 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Generated perf-test fixtures (regenerate with `pnpm gen:sample`)
+public/fixtures
+
 # Test and build output
 coverage
 playwright-report/

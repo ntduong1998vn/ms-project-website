@@ -23,6 +23,22 @@ export const defaultCalendarConfig: ProjectCalendarConfig = {
 }
 
 /**
+ * Longest run of consecutive non-working days the calendar walkers will scan.
+ * A calendar that cannot produce a single working day within a year cannot
+ * schedule anything, so scanning further only burns the main thread.
+ */
+const MAX_NON_WORKING_RUN_DAYS = 366
+
+/**
+ * Upper bound for one task's duration, in working days (~10 years).
+ * Durations arrive from CSV and clipboard imports, where a typo such as `1e9`
+ * would otherwise make the day-by-day walkers spin long enough to hang the tab.
+ */
+export const MAX_TASK_DURATION_DAYS = 3650
+
+const MS_PER_DAY = 86_400_000
+
+/**
  * Format a Date to YYYY-MM-DD in local time
  */
 export function formatToDateString(date: Date): string {
@@ -54,16 +70,87 @@ export function isWorkingDay(date: Date, calendar: ProjectCalendarConfig): boole
 }
 
 /**
+ * Clamp a duration that arrived from an import, expressed in the project's
+ * current unit, to the schedulable window.
+ */
+export function clampImportedDuration(
+  duration: number,
+  calendar: ProjectCalendarConfig,
+  unit: 'day' | 'hour'
+): number {
+  const max =
+    unit === 'hour'
+      ? MAX_TASK_DURATION_DAYS * Math.max(1, calendar.workingHoursPerDay || 8)
+      : MAX_TASK_DURATION_DAYS
+  return Math.min(duration, max)
+}
+
+/**
+ * Whether an imported end date is close enough to `start` to be scheduled.
+ *
+ * A stray far-future date (a `3000-01-01` typo in a CSV) makes the day-by-day
+ * effort walk in resource-effort.ts iterate hundreds of thousands of times per
+ * task; callers fall back to start + duration instead.
+ */
+export function isSchedulableEnd(start: Date, end: Date): boolean {
+  const spanDays = (normalizeDate(end).getTime() - normalizeDate(start).getTime()) / MS_PER_DAY
+  // Working days map to at most 7/5 calendar days; x2 leaves room for holidays.
+  return spanDays >= 0 && spanDays <= MAX_TASK_DURATION_DAYS * 2
+}
+
+/** Parse a YYYY-MM-DD holiday string into a local-midnight Date. */
+function parseDateString(value: string): Date | null {
+  const [year, month, day] = value.split('-').map(Number)
+  if (!year || !month || !day) return null
+  return new Date(year, month - 1, day)
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days)
+}
+
+/**
+ * First working day on or after (step 1) / on or before (step -1) `from`.
+ * Returns the last date scanned when the calendar has no working day at all.
+ */
+function walkToWorkingDay(from: Date, step: 1 | -1, calendar: ProjectCalendarConfig): Date {
+  let cur = from
+  for (let scanned = 0; scanned < MAX_NON_WORKING_RUN_DAYS; scanned++) {
+    if (isWorkingDay(cur, calendar)) return cur
+    cur = addDays(cur, step)
+  }
+  return cur
+}
+
+/**
+ * Move `count` working days away from `from`, not counting `from` itself.
+ *
+ * The scan budget covers a fully non-working week per working day plus one
+ * dead year, so a broken calendar or an absurd imported duration stops instead
+ * of looping forever.
+ */
+function walkWorkingDays(
+  from: Date,
+  count: number,
+  step: 1 | -1,
+  calendar: ProjectCalendarConfig
+): Date {
+  const target = Math.min(count, MAX_TASK_DURATION_DAYS)
+  const scanBudget = target * 7 + MAX_NON_WORKING_RUN_DAYS
+  let cur = from
+  let found = 0
+  for (let scanned = 0; scanned < scanBudget && found < target; scanned++) {
+    cur = addDays(cur, step)
+    if (isWorkingDay(cur, calendar)) found++
+  }
+  return cur
+}
+
+/**
  * Find the next working day on or after the given date
  */
 export function getNextWorkingDay(date: Date, calendar: ProjectCalendarConfig): Date {
-  let cur = normalizeDate(date)
-  let guard = 0
-  while (!isWorkingDay(cur, calendar) && guard < 1000) {
-    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1)
-    guard++
-  }
-  return cur
+  return walkToWorkingDay(normalizeDate(date), 1, calendar)
 }
 
 /**
@@ -73,13 +160,7 @@ export function getPreviousWorkingDay(
   date: Date,
   calendar: ProjectCalendarConfig
 ): Date {
-  let cur = normalizeDate(date)
-  let guard = 0
-  while (!isWorkingDay(cur, calendar) && guard < 1000) {
-    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() - 1)
-    guard++
-  }
-  return cur
+  return walkToWorkingDay(normalizeDate(date), -1, calendar)
 }
 
 /**
@@ -95,17 +176,7 @@ export function getWorkingDayAfter(
     return getNextWorkingDay(date, calendar)
   }
 
-  let cur = normalizeDate(date)
-  let workingDaysCount = 0
-
-  while (workingDaysCount < count) {
-    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1)
-    if (isWorkingDay(cur, calendar)) {
-      workingDaysCount++
-    }
-  }
-
-  return cur
+  return walkWorkingDays(normalizeDate(date), count, 1, calendar)
 }
 
 /**
@@ -128,18 +199,11 @@ export function addWorkingDays(
   }
 
   // Find the first actual working day on or after startDate
-  let cur = getNextWorkingDay(startDate, calendar)
-  let workingDaysCount = 1
+  const firstDay = getNextWorkingDay(startDate, calendar)
+  const lastDay = walkWorkingDays(firstDay, days - 1, 1, calendar)
 
-  while (workingDaysCount < days) {
-    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1)
-    if (isWorkingDay(cur, calendar)) {
-      workingDaysCount++
-    }
-  }
-
-  // cur is the last inclusive working day; return the next calendar day (exclusive boundary)
-  return new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1)
+  // lastDay is the last inclusive working day; return the next calendar day (exclusive boundary)
+  return addDays(lastDay, 1)
 }
 
 /**
@@ -161,17 +225,8 @@ export function subtractWorkingDays(
     exclusiveEndDate.getMonth(),
     exclusiveEndDate.getDate() - 1
   )
-  let cur = getPreviousWorkingDay(inclusiveLastDay, calendar)
-  let workingDaysCount = 1
-
-  while (workingDaysCount < days) {
-    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() - 1)
-    if (isWorkingDay(cur, calendar)) {
-      workingDaysCount++
-    }
-  }
-
-  return cur
+  const lastWorkingDay = getPreviousWorkingDay(inclusiveLastDay, calendar)
+  return walkWorkingDays(lastWorkingDay, days - 1, -1, calendar)
 }
 
 /**
@@ -203,16 +258,28 @@ export function calculateWorkingDays(
   const e = normalizeDate(exclusiveEnd)
   if (e.getTime() <= s.getTime()) return 0
 
-  let cur = new Date(s)
-  let count = 0
-  // Stop strictly before e (exclusive end is not part of the task)
-  while (cur.getTime() < e.getTime()) {
-    if (isWorkingDay(cur, calendar)) {
-      count++
-    }
-    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1)
+  // Counted by arithmetic rather than day by day: an imported end date decades
+  // out would otherwise mean millions of iterations on the main thread.
+  const totalDays = Math.round((e.getTime() - s.getTime()) / MS_PER_DAY)
+  const workingDaysPerWeek = new Set(calendar.workingDays).size
+  const fullWeeks = Math.floor(totalDays / 7)
+  let count = fullWeeks * workingDaysPerWeek
+
+  const remainderStart = addDays(s, fullWeeks * 7)
+  for (let offset = 0; offset < totalDays % 7; offset++) {
+    if (calendar.workingDays.includes(addDays(remainderStart, offset).getDay())) count++
   }
-  return count
+
+  // Holidays only reduce the count when they land on a working weekday inside the range.
+  for (const holiday of calendar.holidays) {
+    const date = parseDateString(holiday.date)
+    if (!date) continue
+    const time = date.getTime()
+    if (time < s.getTime() || time >= e.getTime()) continue
+    if (calendar.workingDays.includes(date.getDay())) count--
+  }
+
+  return Math.max(0, count)
 }
 
 /**
@@ -292,18 +359,12 @@ export function createSvarCalendarAdapter(
     addWorkingDays: (date, diff) => {
       if (diff >= 0) return addWorkingDays(date, diff, config)
 
-      let current = normalizeDate(date)
-      let remaining = Math.ceil(Math.abs(diff))
-      while (remaining > 0) {
-        current = new Date(
-          current.getFullYear(),
-          current.getMonth(),
-          current.getDate() - 1
-        )
-        current = getPreviousWorkingDay(current, config)
-        remaining--
-      }
-      return current
+      return walkWorkingDays(
+        normalizeDate(date),
+        Math.ceil(Math.abs(diff)),
+        -1,
+        config
+      )
     },
     getWorkingDays: (start, end, _inclusive) => getWorkingInterval(start, end),
     addWorkingHours: (date, hours) => addWorkingHours(date, hours, config),

@@ -22,16 +22,21 @@ export function DatePicker({
   value,
   onChange,
   onOpen,
+  onClose,
+  defaultOpen = false,
   ariaLabel,
   className,
 }: {
   value?: Date | string | null
   onChange: (date: Date) => void
   onOpen?: () => void
+  /** Fired when the popover closes, so callers can drop the picker again. */
+  onClose?: () => void
+  defaultOpen?: boolean
   ariaLabel?: string
   className?: string
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const date = toDate(value)
 
   return (
@@ -40,6 +45,7 @@ export function DatePicker({
       onOpenChange={(next) => {
         setOpen(next)
         if (next) onOpen?.()
+        else onClose?.()
       }}
     >
       <PopoverTrigger
@@ -71,6 +77,7 @@ export function DatePicker({
           onSelect={(d) => {
             onChange(new Date(d.getFullYear(), d.getMonth(), d.getDate()))
             setOpen(false)
+            onClose?.()
           }}
         />
       </PopoverContent>

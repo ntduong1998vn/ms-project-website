@@ -6,16 +6,100 @@ import type { GanttResource, TaskWithResources } from '@/types/gantt'
 import { exclusiveEndToInclusiveFinish } from '@/lib/scheduler'
 import type { ResourceEffortWarning } from '@/lib/resource-effort'
 import { DatePicker } from '@/components/ui/date-picker'
+import { sameTaskId } from '@/lib/task-helpers'
+import { useGanttCell, type EditableCellField } from '@/components/gantt/gantt-cell-context'
+
+// One shared formatter: `toLocaleDateString` with options builds an
+// Intl.DateTimeFormat on every call, and this runs twice per row on every
+// scroll tick.
+const dateFormatter = new Intl.DateTimeFormat('en-US', {
+  month: '2-digit',
+  day: '2-digit',
+  year: 'numeric',
+})
 
 function formatDate(date: Date | string | undefined | null): string {
   if (!date) return ''
-  const d = new Date(date)
+  const d = date instanceof Date ? date : new Date(date)
   if (isNaN(d.getTime())) return ''
-  return d.toLocaleDateString('en-US', {
-    month: '2-digit',
-    day: '2-digit',
-    year: 'numeric',
-  })
+  return dateFormatter.format(d)
+}
+
+const dateTriggerClass =
+  'w-full text-center text-xs font-medium text-foreground bg-transparent border border-transparent hover:border-border hover:bg-muted/40 rounded px-1 py-0.5 cursor-pointer outline-none tabular-nums'
+
+/**
+ * Read-only face of a date cell.
+ *
+ * Grid rows are virtualised, so every scroll tick mounts the rows entering the
+ * window. A Radix Popover root costs far more to mount than a button, so only
+ * the cell being edited is allowed to hold the real picker.
+ */
+function DateCellButton({
+  row,
+  field,
+  label,
+  children,
+}: {
+  row: TaskWithResources
+  field: EditableCellField
+  label: string
+  children: React.ReactNode
+}) {
+  const { onSelectTask, onEditCell } = useGanttCell()
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className={dateTriggerClass}
+      // mousedown, not click: SVAR re-renders the row on pointer down, so this
+      // node is already detached by the time a click event would arrive.
+      // preventDefault keeps the browser's own focus pass from firing after the
+      // picker has mounted — it would land on the grid and close it again.
+      onMouseDown={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onSelectTask(row.id)
+        onEditCell({ taskId: row.id, field })
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelectTask(row.id)
+          onEditCell({ taskId: row.id, field })
+        }
+      }}
+    >
+      {children || '—'}
+    </button>
+  )
+}
+
+function useIsEditing(row: TaskWithResources, field: EditableCellField): boolean {
+  const { editingCell } = useGanttCell()
+  return editingCell?.field === field && sameTaskId(editingCell.taskId, row.id)
+}
+
+export function TaskIdCell({ row }: { row: TaskWithResources }) {
+  const { selectedTaskId, onSelectTask } = useGanttCell()
+  const isSelected = selectedTaskId != null && sameTaskId(selectedTaskId, row.id)
+  return (
+    <span
+      onClick={() => onSelectTask(row.id)}
+      style={{
+        fontWeight: 600,
+        fontSize: '0.82rem',
+        color: isSelected ? '#107c41' : '#6b7280',
+        display: 'inline-block',
+        width: '100%',
+        textAlign: 'center',
+        fontVariantNumeric: 'tabular-nums',
+        cursor: 'pointer',
+      }}
+    >
+      {row.id}
+    </span>
+  )
 }
 
 export function PredecessorCell({ row, links }: { row: TaskWithResources; links: ILink[] }) {
@@ -358,19 +442,29 @@ export function StartDateCell({
 }) {
   const isSummary = row.type === 'summary'
   const dateStr = formatDate(row.start)
+  const isEditing = useIsEditing(row, 'start')
+  const { onEditCell } = useGanttCell()
 
   if (isSummary) {
     return <span className="text-xs font-semibold text-foreground/80 tabular-nums px-1">{dateStr}</span>
   }
 
   return (
-    <div className="group relative flex items-center justify-center w-full h-full px-0.5" onClick={() => onSelect?.(row.id)}>
-      <DatePicker
-        value={row.start}
-        onChange={(d) => onDateChange(row.id, d)}
-        onOpen={() => onSelect?.(row.id)}
-        ariaLabel={`Start date for task ${row.text}`}
-      />
+    <div className="group relative flex items-center justify-center w-full h-full px-0.5">
+      {isEditing ? (
+        <DatePicker
+          value={row.start}
+          defaultOpen
+          onChange={(d) => onDateChange(row.id, d)}
+          onOpen={() => onSelect?.(row.id)}
+          onClose={() => onEditCell(null)}
+          ariaLabel={`Start date for task ${row.text}`}
+        />
+      ) : (
+        <DateCellButton row={row} field="start" label={`Start date for task ${row.text}`}>
+          {dateStr}
+        </DateCellButton>
+      )}
     </div>
   )
 }
@@ -393,23 +487,33 @@ export function FinishDateCell({
       ? exclusiveEndToInclusiveFinish(new Date(row.end))
       : null
   const dateStr = formatDate(inclusiveFinish)
+  const isEditing = useIsEditing(row, 'end')
+  const { onEditCell } = useGanttCell()
 
   if (isSummary) {
     return <span className="text-xs font-semibold text-foreground/80 tabular-nums px-1">{dateStr}</span>
   }
 
   return (
-    <div className="group relative flex items-center justify-center w-full h-full px-0.5" onClick={() => onSelect?.(row.id)}>
-      <DatePicker
-        value={inclusiveFinish}
-        onChange={(d) => {
-          // d is the inclusive finish the user chose; pass it as-is.
-          // handleFinishDateChange converts it to exclusive via inclusiveFinishToExclusiveEnd.
-          onDateChange(row.id, d)
-        }}
-        onOpen={() => onSelect?.(row.id)}
-        ariaLabel={`Finish date for task ${row.text}`}
-      />
+    <div className="group relative flex items-center justify-center w-full h-full px-0.5">
+      {isEditing ? (
+        <DatePicker
+          value={inclusiveFinish}
+          defaultOpen
+          onChange={(d) => {
+            // d is the inclusive finish the user chose; pass it as-is.
+            // handleFinishDateChange converts it to exclusive via inclusiveFinishToExclusiveEnd.
+            onDateChange(row.id, d)
+          }}
+          onOpen={() => onSelect?.(row.id)}
+          onClose={() => onEditCell(null)}
+          ariaLabel={`Finish date for task ${row.text}`}
+        />
+      ) : (
+        <DateCellButton row={row} field="end" label={`Finish date for task ${row.text}`}>
+          {dateStr}
+        </DateCellButton>
+      )}
     </div>
   )
 }
