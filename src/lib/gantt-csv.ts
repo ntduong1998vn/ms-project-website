@@ -1,7 +1,7 @@
 import type { ILink, ITask } from '@svar-ui/react-gantt'
 import type { CsvImportData, CsvTaskMapping } from '@/types/gantt-csv'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
-import { autoScheduleTasks, calculateEndDate, formatToDateString, getNextWorkingDay, type ProjectCalendarConfig } from '@/lib/scheduler'
+import { autoScheduleTasks, calculateEndDate, clampImportedDuration, formatToDateString, getNextWorkingDay, isSchedulableEnd, type ProjectCalendarConfig } from '@/lib/scheduler'
 import { hasParentCycle, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
 import { serializeCsv } from '@/lib/csv'
 
@@ -84,6 +84,9 @@ export function importGanttCsv(data: CsvImportData, mapping: CsvTaskMapping, cal
     const parent = rawParent ? rawIdMap.get(rawParent) : undefined
     if (parent !== undefined && importedTypes.get(String(parent)) !== 'milestone' && !sameTaskId(parent, entry.id) && !hasParentCycle(entry.id, parent, parents)) parents.set(String(entry.id), parent)
   }
+  // Only rows that actually have children may be marked open: SVAR's tree walk
+  // recurses into `data` whenever `open === true`, and a childless summary has
+  // `data === null`, which throws and takes the whole view down.
   const parentIds = new Set(Array.from(parents.values(), (parent) => String(parent)))
   const nextResources = [...resourceList]
   const resourceIdsByName = new Map<string, number>()
@@ -108,13 +111,13 @@ export function importGanttCsv(data: CsvImportData, mapping: CsvTaskMapping, cal
     const type: ITask['type'] = typeValue === 'summary' || typeValue === 'milestone' ? typeValue : 'task'
     const start = parseCsvDateValue(csvValue(row, mapping, 'start')) ?? getNextWorkingDay(new Date(), calendarConfig)
     const parsedDuration = Number(csvValue(row, mapping, 'duration'))
-    const duration = type === 'milestone' ? 0 : Number.isFinite(parsedDuration) && parsedDuration >= 0 ? parsedDuration : 1
+    const duration = type === 'milestone' ? 0 : Number.isFinite(parsedDuration) && parsedDuration >= 0 ? clampImportedDuration(parsedDuration, calendarConfig, durationUnit) : 1
     const parsedEnd = parseCsvDateValue(csvValue(row, mapping, 'end'))
-    const end = type === 'milestone' ? start : parsedEnd && parsedEnd.getTime() >= start.getTime() ? parsedEnd : calculateEndDate(start, duration, calendarConfig, durationUnit)
+    const end = type === 'milestone' ? start : parsedEnd && parsedEnd.getTime() >= start.getTime() && isSchedulableEnd(start, parsedEnd) ? parsedEnd : calculateEndDate(start, duration, calendarConfig, durationUnit)
     const parsedProgress = Number(csvValue(row, mapping, 'progress'))
     const progress = Number.isFinite(parsedProgress) ? Math.min(100, Math.max(0, parsedProgress)) : 0
     const resources = resolveImportedResources(csvValue(row, mapping, 'resources'))
-    return { id, text: csvValue(row, mapping, 'text') || `Task ${index + 1}`, start, end, duration, progress, type, open: type === 'summary' || parentIds.has(String(id)), ...(parents.has(String(id)) ? { parent: parents.get(String(id)) } : {}), ...(resources.length > 0 ? { resources } : {}) }
+    return { id, text: csvValue(row, mapping, 'text') || `Task ${index + 1}`, start, end, duration, progress, type, open: parentIds.has(String(id)), ...(parents.has(String(id)) ? { parent: parents.get(String(id)) } : {}), ...(resources.length > 0 ? { resources } : {}) }
   })
   const importedLinks: ILink[] = []
   const relationshipKeys = new Set<string>()
