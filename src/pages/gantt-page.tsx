@@ -15,6 +15,7 @@ import { ResourcesPanel } from '@/components/gantt/resources-panel'
 import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
 import { useGanttColumns } from '@/components/gantt/use-gantt-columns'
 import { useGanttProject } from '@/hooks/use-gantt-project'
+import { clearLeafOpenFlags } from '@/lib/task-helpers'
 import { ResourceUsageView, TaskUsageView } from '@/components/gantt/usage-views'
 import { redmineStandardFields } from '@/lib/integrations/redmine/fields'
 
@@ -249,7 +250,7 @@ export function GanttPage() {
               <Gantt
                 init={actions.handleInit}
                 displayMode={isGanttVisible ? 'all' : 'grid'}
-                tasks={gantt.api ? displayTasks : []}
+                tasks={gantt.api ? clearLeafOpenFlags(displayTasks) : []}
                 links={displayLinks}
                 criticalPath={showCriticalPath ? { type: 'strict' } : null}
                 resources={gantt.ganttResources}
@@ -292,7 +293,7 @@ export function GanttPage() {
         </div>
       )}
       <CsvImportDialog
-        key={csvImportData ? `${csvImportData.fileName}:${csvImportData.headers.join('|')}` : 'empty'}
+        key={csvImportData ? `${csvImportData.fileName}:${csvImportData.headers.join('|')}` : 'csv-empty'}
         data={csvImportData}
         open={csvImportData !== null}
         onOpenChange={(open) => {
@@ -301,7 +302,7 @@ export function GanttPage() {
         onConfirm={actions.handleImportCsv}
       />
       <ClipboardImportDialog
-        key={clipboardImportData ? 'paste' : 'empty'}
+        key={clipboardImportData ? 'clipboard-paste' : 'clipboard-empty'}
         data={clipboardImportData}
         open={clipboardImportData !== null}
         existingTaskIds={tasks.map((task) => task.id).filter((id): id is string | number => id !== undefined)}

@@ -11,13 +11,24 @@ let dbPromise: Promise<IDBDatabase | undefined> | null = null
 function openDb(): Promise<IDBDatabase | undefined> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(undefined)
   if (!dbPromise) {
-    dbPromise = new Promise((resolve) => {
+    dbPromise = new Promise<IDBDatabase | undefined>((resolve) => {
       const request = indexedDB.open(DB_NAME, 1)
       request.onupgradeneeded = () => {
         request.result.createObjectStore(STORE)
       }
-      request.onsuccess = () => resolve(request.result)
+      request.onsuccess = () => {
+        const db = request.result
+        db.onversionchange = () => {
+          db.close()
+          dbPromise = null
+        }
+        resolve(db)
+      }
       request.onerror = () => resolve(undefined)
+      request.onblocked = () => resolve(undefined)
+    }).catch(() => undefined).then((db) => {
+      if (!db) dbPromise = null
+      return db
     })
   }
   return dbPromise
@@ -27,9 +38,11 @@ export async function idbGet<T>(key: string): Promise<T | undefined> {
   const db = await openDb()
   if (!db) return undefined
   return new Promise((resolve) => {
-    const request = db.transaction(STORE, 'readonly').objectStore(STORE).get(key)
+    const tx = db.transaction(STORE, 'readonly')
+    const request = tx.objectStore(STORE).get(key)
     request.onsuccess = () => resolve(request.result as T | undefined)
     request.onerror = () => resolve(undefined)
+    tx.onabort = () => resolve(undefined)
   })
 }
 
@@ -41,6 +54,7 @@ export async function idbSet(key: string, value: unknown): Promise<void> {
     tx.objectStore(STORE).put(value, key)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
   })
 }
 
@@ -52,6 +66,7 @@ export async function idbDelete(key: string): Promise<void> {
     tx.objectStore(STORE).delete(key)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
   })
 }
 
@@ -63,5 +78,6 @@ export async function idbClear(): Promise<void> {
     tx.objectStore(STORE).clear()
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
   })
 }

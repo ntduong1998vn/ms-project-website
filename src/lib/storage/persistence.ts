@@ -33,7 +33,18 @@ function isPersistedProject(value: unknown): value is PersistedProject {
 function isPersistedSettings(value: unknown): value is PersistedSettings {
   if (typeof value !== 'object' || value === null) return false
   const s = value as PersistedSettings
-  return s.v === 1 && typeof s.calendarConfig === 'object' && s.calendarConfig !== null
+  const c = s.calendarConfig
+  return s.v === 1 && typeof c === 'object' && c !== null
+    && Number.isFinite(c.workingHoursPerDay) && c.workingHoursPerDay > 0
+    && Array.isArray(c.workingDays) && c.workingDays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    && Array.isArray(c.holidays) && c.holidays.every((holiday) => holiday && typeof holiday.date === 'string')
+    && typeof s.isAutoSchedule === 'boolean'
+    && ['day', 'hour'].includes(s.durationUnit)
+    && ['hour', 'day', 'week', 'month'].includes(s.zoom)
+    && ['gantt', 'resource-usage', 'task-usage'].includes(s.viewMode)
+    && typeof s.isWorkColumnVisible === 'boolean'
+    && Array.isArray(s.visibleRemoteColumns) && s.visibleRemoteColumns.every((key) => typeof key === 'string')
+    && typeof s.showCriticalPath === 'boolean' && typeof s.isGanttVisible === 'boolean'
 }
 
 export async function loadPersistedState(): Promise<{
@@ -41,8 +52,8 @@ export async function loadPersistedState(): Promise<{
   settings?: PersistedSettings
 }> {
   const [project, settings] = await Promise.all([
-    idbGet<unknown>('project'),
-    idbGet<unknown>('settings'),
+    idbGet<unknown>('project').catch(() => undefined),
+    idbGet<unknown>('settings').catch(() => undefined),
   ])
   return {
     project: isPersistedProject(project) ? project : undefined,

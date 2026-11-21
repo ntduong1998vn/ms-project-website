@@ -97,14 +97,6 @@ export function resequenceProject(
     }
     return resequencedTask
   })
-  const parentIds = new Set(
-    resequencedTasks
-      .filter((task) => task.parent !== undefined)
-      .map((task) => String(task.parent))
-  )
-  resequencedTasks.forEach((task) => {
-    if (!parentIds.has(String(task.id))) delete task.open
-  })
 
   const resequencedLinks: ILink[] = []
   for (const link of links) {
@@ -115,10 +107,25 @@ export function resequenceProject(
   }
 
   return {
-    tasks: resequencedTasks,
+    tasks: clearLeafOpenFlags(resequencedTasks),
     links: resequencedLinks,
     selectedTaskId: selectedTaskId === null ? null : idMap.get(String(selectedTaskId)) ?? null,
   }
+}
+
+// SVAR Gantt walks the children of every task flagged `open`, so a childless
+// task with `open: true` crashes its store with a null `data` branch.
+export function clearLeafOpenFlags(tasks: ITask[]): ITask[] {
+  const parentIds = new Set(
+    tasks.filter((task) => task.parent !== undefined).map((task) => String(task.parent))
+  )
+  if (tasks.every((task) => !task.open || parentIds.has(String(task.id)))) return tasks
+  return tasks.map((task) => {
+    if (!task.open || parentIds.has(String(task.id))) return task
+    const leafTask = { ...task }
+    delete leafTask.open
+    return leafTask
+  })
 }
 
 export function hasParentCycle(

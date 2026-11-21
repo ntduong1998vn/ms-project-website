@@ -89,6 +89,21 @@ describe('persistProject / loadPersistedState', () => {
 })
 
 describe('persistSettings', () => {
+  it.each([
+    { calendarConfig: {} },
+    { zoom: 'invalid' },
+    { visibleRemoteColumns: null },
+    { isGanttVisible: undefined },
+  ])('rejects malformed settings %j', async (invalid) => {
+    await idbSet('settings', { v: 1, ...settings, ...invalid })
+    expect((await loadPersistedState()).settings).toBeUndefined()
+  })
+
+  it('round-trips an empty project', async () => {
+    persistProject({ tasks: [], links: [], resourceList: [] })
+    expect((await loadPersistedState()).project).toEqual({ v: 1, tasks: [], links: [], resourceList: [] })
+  })
+
   it('round-trips settings', async () => {
     persistSettings(settings)
     const { settings: loaded } = await loadPersistedState()

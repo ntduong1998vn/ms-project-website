@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { idbClear, idbGet, idbSet } from '@/lib/storage/idb'
-import type { PersistedProject } from '@/lib/storage/persistence'
+import type { PersistedProject, PersistedSettings } from '@/lib/storage/persistence'
 import { useGanttProject } from '@/hooks/use-gantt-project'
 
 const seeded: PersistedProject = {
@@ -26,6 +26,16 @@ beforeEach(async () => {
 })
 
 describe('useGanttProject persistence', () => {
+  it('persists settings changed after an empty startup and restores them on remount', async () => {
+    const first = renderHook(() => useGanttProject())
+    await waitFor(async () => expect(await idbGet('settings')).toBeDefined())
+    act(() => first.result.current.state.setZoom('month'))
+    await waitFor(async () => expect((await idbGet<PersistedSettings>('settings'))?.zoom).toBe('month'))
+    first.unmount()
+    const second = renderHook(() => useGanttProject())
+    await waitFor(() => expect(second.result.current.state.zoom).toBe('month'))
+  })
+
   it('hydrates state from IndexedDB on mount', async () => {
     await idbSet('project', seeded)
     const { result } = renderHook(() => useGanttProject())

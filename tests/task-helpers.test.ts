@@ -4,6 +4,7 @@ import type { ILink, ITask } from '@svar-ui/react-gantt'
 import {
   addTaskAtPlacement,
   buildDependencyChain,
+  clearLeafOpenFlags,
   collectTaskSubtreeIds,
   getNextNumericTaskId,
   hasParentCycle,
@@ -430,4 +431,38 @@ describe('task placement helpers', () => {
     expect(moveTaskAtPlacement(tasks, 99, 1, 'before')).toBe(tasks)
   })
 
+})
+
+describe('clearLeafOpenFlags', () => {
+  it('drops open from tasks without children and keeps it on parents', () => {
+    const tasks = [
+      task(1, 'parent', { type: 'summary', open: true }),
+      task(2, 'child', { parent: 1 }),
+      task(3, 'former parent', { open: true }),
+      task(4, 'empty summary', { type: 'summary', open: true }),
+    ]
+
+    const result = clearLeafOpenFlags(tasks)
+
+    expect(result[0]).toMatchObject({ id: 1, open: true })
+    expect(result[1]).toBe(tasks[1])
+    expect(result[2]).not.toHaveProperty('open')
+    expect(result[3]).toMatchObject({ id: 4, type: 'summary' })
+    expect(result[3]).not.toHaveProperty('open')
+    expect(tasks[2].open).toBe(true)
+  })
+
+  it('returns the same array when no leaf task is open', () => {
+    const tasks = [task(1, 'parent', { open: true }), task(2, 'child', { parent: 1 })]
+    expect(clearLeafOpenFlags(tasks)).toBe(tasks)
+  })
+
+  it('clears the open flag left on the old parent after indent then outdent', () => {
+    const indented = [task(1, 'previous', { open: true }), task(2, 'new task', { parent: 1 })]
+    const outdented = moveTaskAtPlacement(indented, 2, 1, 'after')
+
+    expect(ids(outdented)).toEqual([1, 2])
+    expect(outdented[1]).not.toHaveProperty('parent')
+    expect(clearLeafOpenFlags(outdented)[0]).not.toHaveProperty('open')
+  })
 })

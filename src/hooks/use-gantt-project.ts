@@ -118,7 +118,7 @@ export function useGanttProject() {
 
   // Hydration gate: save effects below must not run until persisted state has
   // been loaded, otherwise the initial empty state would overwrite stored data.
-  const hydratedRef = useRef(false)
+  const [isHydrated, setIsHydrated] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -140,7 +140,10 @@ export function useGanttProject() {
         setShowCriticalPath(settings.showCriticalPath)
         setIsGanttVisible(settings.isGanttVisible)
       }
-      hydratedRef.current = true
+      setIsHydrated(true)
+    }).catch((error) => {
+      console.warn('Loading persisted state failed', error)
+      if (!cancelled) setIsHydrated(true)
     })
     return () => {
       cancelled = true
@@ -148,30 +151,25 @@ export function useGanttProject() {
   }, [])
 
   useEffect(() => {
-    if (!hydratedRef.current) return
-    const timer = setTimeout(() => {
-      persistProject({ tasks, links, resourceList })
-    }, 400)
-    return () => clearTimeout(timer)
-  }, [tasks, links, resourceList])
+    if (!isHydrated) return
+    persistProject({ tasks, links, resourceList })
+  }, [isHydrated, tasks, links, resourceList])
 
   useEffect(() => {
-    if (!hydratedRef.current) return
-    const timer = setTimeout(() => {
-      persistSettings({
-        calendarConfig,
-        isAutoSchedule,
-        durationUnit,
-        zoom,
-        viewMode,
-        isWorkColumnVisible,
-        visibleRemoteColumns,
-        showCriticalPath,
-        isGanttVisible,
-      })
-    }, 400)
-    return () => clearTimeout(timer)
+    if (!isHydrated) return
+    persistSettings({
+      calendarConfig,
+      isAutoSchedule,
+      durationUnit,
+      zoom,
+      viewMode,
+      isWorkColumnVisible,
+      visibleRemoteColumns,
+      showCriticalPath,
+      isGanttVisible,
+    })
   }, [
+    isHydrated,
     calendarConfig,
     isAutoSchedule,
     durationUnit,
