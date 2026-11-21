@@ -36,13 +36,13 @@ function openDb(): Promise<IDBDatabase | undefined> {
 
 export async function idbGet<T>(key: string): Promise<T | undefined> {
   const db = await openDb()
-  if (!db) return undefined
-  return new Promise((resolve) => {
+  if (!db) throw new Error('IndexedDB is unavailable')
+  return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readonly')
     const request = tx.objectStore(STORE).get(key)
     request.onsuccess = () => resolve(request.result as T | undefined)
-    request.onerror = () => resolve(undefined)
-    tx.onabort = () => resolve(undefined)
+    request.onerror = () => reject(request.error)
+    tx.onabort = () => reject(tx.error)
   })
 }
 

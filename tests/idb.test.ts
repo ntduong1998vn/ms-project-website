@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { idbClear, idbDelete, idbGet, idbSet } from '@/lib/storage/idb'
 
 beforeEach(async () => {
@@ -6,6 +6,20 @@ beforeEach(async () => {
 })
 
 describe('idb kv wrapper', () => {
+  it('rejects an aborted read instead of treating it as a missing key', async () => {
+    const get = IDBObjectStore.prototype.get
+    const read = vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function (key) {
+      const request = get.call(this, key)
+      this.transaction.abort()
+      return request
+    })
+    try {
+      await expect(idbGet('project')).rejects.toBeDefined()
+    } finally {
+      read.mockRestore()
+    }
+  })
+
   it('returns undefined for a missing key', async () => {
     await expect(idbGet('nope')).resolves.toBeUndefined()
   })

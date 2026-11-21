@@ -47,14 +47,18 @@ function isPersistedSettings(value: unknown): value is PersistedSettings {
 export async function loadPersistedState(): Promise<{
   project?: PersistedProject
   settings?: PersistedSettings
+  projectReadFailed?: boolean
+  settingsReadFailed?: boolean
 }> {
-  const [project, settings] = await Promise.all([
-    idbGet<unknown>('project').catch(() => undefined),
-    idbGet<unknown>('settings').catch(() => undefined),
+  const [project, settings] = await Promise.allSettled([
+    idbGet<unknown>('project'),
+    idbGet<unknown>('settings'),
   ])
   return {
-    project: isPersistedProject(project) ? project : undefined,
-    settings: isPersistedSettings(settings) ? settings : undefined,
+    project: project.status === 'fulfilled' && isPersistedProject(project.value) ? project.value : undefined,
+    settings: settings.status === 'fulfilled' && isPersistedSettings(settings.value) ? settings.value : undefined,
+    ...(project.status === 'rejected' ? { projectReadFailed: true } : {}),
+    ...(settings.status === 'rejected' ? { settingsReadFailed: true } : {}),
   }
 }
 

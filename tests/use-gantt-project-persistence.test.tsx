@@ -1,8 +1,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as storage from '@/lib/storage/idb'
 import { idbClear, idbGet, idbSet } from '@/lib/storage/idb'
 import type { PersistedProject, PersistedSettings } from '@/lib/storage/persistence'
 import { useGanttProject } from '@/hooks/use-gantt-project'
+import { defaultCalendarConfig } from '@/lib/scheduler'
 
 const seeded: PersistedProject = {
   v: 1,
@@ -25,7 +27,42 @@ beforeEach(async () => {
   await idbClear()
 })
 
+afterEach(() => vi.restoreAllMocks())
+
 describe('useGanttProject persistence', () => {
+  it.each(['project', 'settings'] as const)('does not overwrite %s after its startup read fails', async (slot) => {
+    const settings: PersistedSettings = {
+      v: 1,
+      calendarConfig: defaultCalendarConfig,
+      isAutoSchedule: false,
+      durationUnit: 'hour',
+      zoom: 'week',
+      viewMode: 'gantt',
+      isWorkColumnVisible: true,
+      isGanttVisible: false,
+    }
+    await idbSet('project', seeded)
+    await idbSet('settings', settings)
+    const get = IDBObjectStore.prototype.get
+    const read = vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function (key) {
+      if (key === slot) throw new DOMException('Read denied', 'SecurityError')
+      return get.call(this, key)
+    })
+    const writes = vi.spyOn(storage, 'idbSet')
+    const { result } = renderHook(() => useGanttProject())
+    const healthySlot = slot === 'project' ? 'settings' : 'project'
+    await waitFor(() => expect(writes).toHaveBeenCalledWith(healthySlot, expect.anything()))
+    read.mockRestore()
+    writes.mockClear()
+    act(() => {
+      result.current.state.setTasks([{ ...seeded.tasks[0], text: 'Edited' }])
+      result.current.state.setZoom('month')
+    })
+    await waitFor(() => expect(writes).toHaveBeenCalledWith(healthySlot, expect.anything()))
+    expect(writes.mock.calls.some(([key]) => key === slot)).toBe(false)
+    await expect(idbGet(slot)).resolves.toEqual(slot === 'project' ? seeded : settings)
+  })
+
   it('persists settings changed after an empty startup and restores them on remount', async () => {
     const first = renderHook(() => useGanttProject())
     await waitFor(async () => expect(await idbGet('settings')).toBeDefined())

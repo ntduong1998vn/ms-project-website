@@ -50,11 +50,11 @@ export function useGanttProject() {
   const calendarConfigRef = useRef(calendarConfig)
   const durationUnitRef = useRef(durationUnit)
 
-  const [isHydrated, setIsHydrated] = useState(false)
+  const [canPersist, setCanPersist] = useState({ project: false, settings: false })
 
   useEffect(() => {
     let cancelled = false
-    loadPersistedState().then(({ project, settings }) => {
+    loadPersistedState().then(({ project, settings, projectReadFailed, settingsReadFailed }) => {
       if (cancelled) return
       if (project) {
         setTasks(project.tasks)
@@ -70,23 +70,22 @@ export function useGanttProject() {
         setIsWorkColumnVisible(settings.isWorkColumnVisible)
         setIsGanttVisible(settings.isGanttVisible)
       }
-      setIsHydrated(true)
+      setCanPersist({ project: !projectReadFailed, settings: !settingsReadFailed })
     }).catch((error) => {
       console.warn('Loading persisted state failed', error)
-      if (!cancelled) setIsHydrated(true)
     })
     return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
-    if (!isHydrated) return
+    if (!canPersist.project) return
     persistProject({ tasks, links, resourceList })
-  }, [isHydrated, tasks, links, resourceList])
+  }, [canPersist.project, tasks, links, resourceList])
 
   useEffect(() => {
-    if (!isHydrated) return
+    if (!canPersist.settings) return
     persistSettings({ calendarConfig, isAutoSchedule, durationUnit, zoom, viewMode, isWorkColumnVisible, isGanttVisible })
-  }, [isHydrated, calendarConfig, isAutoSchedule, durationUnit, zoom, viewMode, isWorkColumnVisible, isGanttVisible])
+  }, [canPersist.settings, calendarConfig, isAutoSchedule, durationUnit, zoom, viewMode, isWorkColumnVisible, isGanttVisible])
 
   useLayoutEffect(() => {
     calendarConfigRef.current = calendarConfig
