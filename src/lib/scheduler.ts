@@ -365,12 +365,23 @@ export function autoScheduleTasks(
       .filter((task) => task.type === 'milestone' && task.id !== undefined)
       .map((task) => String(task.id))
   )
+  const containerIds = new Set(
+    tasks
+      .filter((task) => task.parent !== undefined && !milestoneIds.has(String(task.parent)))
+      .map((task) => String(task.parent))
+  )
   const taskMap = new Map<string | number, SchedulableTask>()
   for (const t of tasks) {
     if (t.id === undefined) continue
-    const s = t.start ? new Date(t.start) : new Date()
     const isMilestone = t.type === 'milestone'
-    const dur = isMilestone ? 0 : (t.duration ?? 1)
+    // Roll-up overwrites a regular task's dates while it has children; restore them once it has none.
+    const restoreOwnDates = !containerIds.has(String(t.id)) && t.ownStart && t.ownEnd
+    const s = restoreOwnDates ? new Date(t.ownStart) : t.start ? new Date(t.start) : new Date()
+    const dur = isMilestone
+      ? 0
+      : restoreOwnDates
+        ? calculateTaskDuration(new Date(t.ownStart), new Date(t.ownEnd), calendar, durationUnit)
+        : (t.duration ?? 1)
     const validStart = getNextWorkingDay(s, calendar)
     // Always recompute end from start+duration so stale or calendar-day input ends are replaced
     const e = isMilestone
@@ -379,6 +390,18 @@ export function autoScheduleTasks(
     const normalizedTask = { ...t }
     if (t.parent !== undefined && milestoneIds.has(String(t.parent))) {
       delete normalizedTask.parent
+    }
+    if (restoreOwnDates) {
+      delete normalizedTask.ownStart
+      delete normalizedTask.ownEnd
+    } else if (
+      containerIds.has(String(t.id)) &&
+      !isMilestone &&
+      t.type !== 'summary' &&
+      !t.ownStart
+    ) {
+      normalizedTask.ownStart = validStart
+      normalizedTask.ownEnd = e
     }
 
     taskMap.set(t.id, {
@@ -593,6 +616,10 @@ export function autoScheduleTasks(
     if (!updated) return t
     const merged = { ...t, ...updated } as ITask
     if (t.parent !== undefined && updated.parent === undefined) delete merged.parent
+    if (t.ownStart !== undefined && updated.ownStart === undefined) {
+      delete merged.ownStart
+      delete merged.ownEnd
+    }
     return merged
   })
 }
