@@ -192,7 +192,7 @@ export function GanttPage() {
         </div>
       )}
       <CsvImportDialog
-        key={csvImportData ? `${csvImportData.fileName}:${csvImportData.headers.join('|')}` : 'empty'}
+        key={csvImportData ? `${csvImportData.fileName}:${csvImportData.headers.join('|')}` : 'csv-empty'}
         data={csvImportData}
         open={csvImportData !== null}
         onOpenChange={(open) => {
@@ -201,7 +201,7 @@ export function GanttPage() {
         onConfirm={actions.handleImportCsv}
       />
       <ClipboardImportDialog
-        key={clipboardImportData ? 'paste' : 'empty'}
+        key={clipboardImportData ? 'clipboard-paste' : 'clipboard-empty'}
         data={clipboardImportData}
         open={clipboardImportData !== null}
         existingTaskIds={tasks.map((task) => task.id).filter((id): id is string | number => id !== undefined)}

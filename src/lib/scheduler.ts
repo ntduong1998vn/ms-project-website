@@ -341,6 +341,25 @@ export function inclusiveFinishToExclusiveEnd(inclusiveFinish: Date): Date {
 }
 
 
+interface OwnSchedule {
+  start: Date
+  duration: number
+  unit: 'day' | 'hour'
+  rolledStart?: number
+  rolledDuration?: number
+}
+
+function convertDuration(
+  duration: number,
+  from: 'day' | 'hour',
+  to: 'day' | 'hour',
+  calendar: ProjectCalendarConfig
+): number {
+  if (from === to) return duration
+  const hoursPerDay = calendar.workingHoursPerDay || 8
+  return to === 'hour' ? duration * hoursPerDay : Math.ceil(duration / hoursPerDay)
+}
+
 interface SchedulableTask extends ITask {
   id: string | number
   start: Date
@@ -365,12 +384,31 @@ export function autoScheduleTasks(
       .filter((task) => task.type === 'milestone' && task.id !== undefined)
       .map((task) => String(task.id))
   )
+  const containerIds = new Set(
+    tasks
+      .filter((task) => task.parent !== undefined && !milestoneIds.has(String(task.parent)))
+      .map((task) => String(task.parent))
+  )
   const taskMap = new Map<string | number, SchedulableTask>()
   for (const t of tasks) {
     if (t.id === undefined) continue
-    const s = t.start ? new Date(t.start) : new Date()
     const isMilestone = t.type === 'milestone'
-    const dur = isMilestone ? 0 : (t.duration ?? 1)
+    const isContainer = containerIds.has(String(t.id))
+    // Roll-up overwrites a regular task's schedule while it has children; restore it once it has
+    // none, unless the rolled-up values were edited in the meantime.
+    const own = t.ownSchedule as OwnSchedule | undefined
+    const restoreOwn =
+      !isContainer &&
+      own !== undefined &&
+      t.start !== undefined &&
+      new Date(t.start).getTime() === own.rolledStart &&
+      t.duration === own.rolledDuration
+    const s = restoreOwn ? new Date(own.start) : t.start ? new Date(t.start) : new Date()
+    const dur = isMilestone
+      ? 0
+      : restoreOwn
+        ? convertDuration(own.duration, own.unit, durationUnit, calendar)
+        : (t.duration ?? 1)
     const validStart = getNextWorkingDay(s, calendar)
     // Always recompute end from start+duration so stale or calendar-day input ends are replaced
     const e = isMilestone
@@ -379,6 +417,11 @@ export function autoScheduleTasks(
     const normalizedTask = { ...t }
     if (t.parent !== undefined && milestoneIds.has(String(t.parent))) {
       delete normalizedTask.parent
+    }
+    if (!isContainer) {
+      delete normalizedTask.ownSchedule
+    } else if (!own && !isMilestone && t.type !== 'summary') {
+      normalizedTask.ownSchedule = { start: validStart, duration: dur, unit: durationUnit }
     }
 
     taskMap.set(t.id, {
@@ -585,6 +628,13 @@ export function autoScheduleTasks(
         calendar,
         durationUnit
       )
+      if (summaryTask.ownSchedule) {
+        summaryTask.ownSchedule = {
+          ...summaryTask.ownSchedule,
+          rolledStart: summaryTask.start.getTime(),
+          rolledDuration: summaryTask.duration,
+        }
+      }
     }
   }
   return tasks.map((t) => {
@@ -593,6 +643,7 @@ export function autoScheduleTasks(
     if (!updated) return t
     const merged = { ...t, ...updated } as ITask
     if (t.parent !== undefined && updated.parent === undefined) delete merged.parent
+    if (t.ownSchedule !== undefined && updated.ownSchedule === undefined) delete merged.ownSchedule
     return merged
   })
 }
