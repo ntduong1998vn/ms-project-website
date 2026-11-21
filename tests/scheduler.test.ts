@@ -461,8 +461,6 @@ describe('autoScheduleTasks dependency semantics', () => {
     expect(dateString(scheduledTask(indented, 50).start)).toBe('2026-09-14')
 
     const rescheduled = autoScheduleTasks(indented, [], workWeekCalendar, 'day')
-    expect(dateString(new Date(scheduledTask(rescheduled, 50).ownStart))).toBe('2026-09-07')
-
     const outdented = autoScheduleTasks(
       rescheduled.map((item) => (item.id === 51 ? { ...item, parent: undefined } : item)),
       [],
@@ -473,15 +471,14 @@ describe('autoScheduleTasks dependency semantics', () => {
     expect(parent.duration).toBe(2)
     expect(dateString(parent.start)).toBe('2026-09-07')
     expect(dateString(parent.end!)).toBe('2026-09-09')
-    expect(parent).not.toHaveProperty('ownStart')
-    expect(parent).not.toHaveProperty('ownEnd')
+    expect(parent).not.toHaveProperty('ownSchedule')
   })
-  it('restores a former parent duration in the current duration unit', () => {
+  it('restores a partial-day estimate exactly', () => {
     const indented = autoScheduleTasks(
-      [task(52, localDate(2026, 9, 7), 2), { ...task(53, localDate(2026, 9, 7), 1), parent: 52 }],
+      [task(52, localDate(2026, 9, 7), 4), { ...task(53, localDate(2026, 9, 7), 8), parent: 52 }],
       [],
       workWeekCalendar,
-      'day'
+      'hour'
     )
     const outdented = autoScheduleTasks(
       indented.filter((item) => item.id !== 53),
@@ -489,19 +486,51 @@ describe('autoScheduleTasks dependency semantics', () => {
       workWeekCalendar,
       'hour'
     )
-    expect(scheduledTask(outdented, 52).duration).toBe(16)
+    expect(scheduledTask(outdented, 52).duration).toBe(4)
   })
-  it('does not store own dates on summary tasks', () => {
+  it('converts the restored duration to the current duration unit', () => {
+    const indented = autoScheduleTasks(
+      [task(54, localDate(2026, 9, 7), 2), { ...task(55, localDate(2026, 9, 7), 1), parent: 54 }],
+      [],
+      workWeekCalendar,
+      'day'
+    )
+    const inHours = indented.map((item) => ({ ...item, duration: (item.duration ?? 0) * 8 }))
+    const regrouped = autoScheduleTasks(inHours, [], workWeekCalendar, 'hour')
+    const outdented = autoScheduleTasks(
+      regrouped.filter((item) => item.id !== 55),
+      [],
+      workWeekCalendar,
+      'hour'
+    )
+    expect(scheduledTask(outdented, 54).duration).toBe(16)
+  })
+  it('keeps edits made after the last child was removed without rescheduling', () => {
+    const indented = autoScheduleTasks(
+      [task(56, localDate(2026, 9, 7), 2), { ...task(57, localDate(2026, 9, 14), 1), parent: 56 }],
+      [],
+      workWeekCalendar,
+      'day'
+    )
+    const edited = indented
+      .filter((item) => item.id !== 57)
+      .map((item) => (item.id === 56 ? { ...item, start: localDate(2026, 9, 21), duration: 3 } : item))
+    const parent = scheduledTask(autoScheduleTasks(edited, [], workWeekCalendar, 'day'), 56)
+    expect(parent.duration).toBe(3)
+    expect(dateString(parent.start)).toBe('2026-09-21')
+    expect(parent).not.toHaveProperty('ownSchedule')
+  })
+  it('does not snapshot summary tasks', () => {
     const result = autoScheduleTasks(
       [
-        { ...task(54, localDate(2026, 9, 7), 2), type: 'summary' } as ITask,
-        { ...task(55, localDate(2026, 9, 8), 1), parent: 54 },
+        { ...task(58, localDate(2026, 9, 7), 2), type: 'summary' } as ITask,
+        { ...task(59, localDate(2026, 9, 8), 1), parent: 58 },
       ],
       [],
       workWeekCalendar,
       'day'
     )
-    expect(scheduledTask(result, 54)).not.toHaveProperty('ownStart')
+    expect(scheduledTask(result, 58)).not.toHaveProperty('ownSchedule')
   })
   it('drops raw children assigned to a milestone parent', () => {
     const result = autoScheduleTasks(
