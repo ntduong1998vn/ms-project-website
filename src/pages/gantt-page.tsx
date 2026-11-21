@@ -10,6 +10,7 @@ import { ResourcesPanel } from '@/components/gantt/resources-panel'
 import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
 import { useGanttColumns } from '@/components/gantt/use-gantt-columns'
 import { useGanttProject } from '@/hooks/use-gantt-project'
+import { clearLeafOpenFlags } from '@/lib/task-helpers'
 import { ResourceUsageView, TaskUsageView } from '@/components/gantt/usage-views'
 
 export function GanttPage() {
@@ -150,7 +151,7 @@ export function GanttPage() {
               <Gantt
                 init={actions.handleInit}
                 displayMode={isGanttVisible ? 'all' : 'grid'}
-                tasks={gantt.api ? tasks : []}
+                tasks={gantt.api ? clearLeafOpenFlags(tasks) : []}
                 links={links}
                 resources={gantt.ganttResources}
                 scales={gantt.scalePresets[zoom]}
