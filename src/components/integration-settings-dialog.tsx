@@ -179,7 +179,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
         {draft.mapping.fields[key] && !fields.some((f) => f.key === draft.mapping.fields[key]) && <option value={draft.mapping.fields[key]!}>{draft.mapping.fields[key]} (unavailable)</option>}
       </select></label>)}</div>
       <h3 className="text-sm font-semibold">Additional field sync</h3>
-      <p className="text-xs text-muted-foreground">Checked fields are imported on Get Tasks and written back on Sync to Redmine, even when hidden. Uncheck to disable additional-field sync; mapped fields are controlled above. Observed options are not a complete server schema.</p>
+      <p className="text-xs text-muted-foreground">Checked fields are imported on Get Tasks and written back on Sync, even when hidden. Uncheck to disable additional-field sync; mapped fields are controlled above. Observed options are not a complete server schema.</p>
       {syncFields.map((f) => <div key={f.key} className="rounded-md border border-border p-3">
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.mapping.extraFields.includes(f.key)} onChange={(e) => { const checked = e.target.checked; setDraft((d) => ({ ...d, mapping: { ...d.mapping, extraFields: checked ? [...d.mapping.extraFields, f.key] : d.mapping.extraFields.filter((k) => k !== f.key) } })) }} />Sync {f.label}<span className="ml-auto text-xs text-muted-foreground">{f.key} · {f.valueType}{f.multiple ? ' · multiple' : ''}</span></label>
         {f.kind === 'custom' && <details className="mt-2"><summary className="cursor-pointer text-xs text-primary">Override {f.label}</summary><div className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -195,9 +195,11 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
     </section>}
     {step === 3 && <section className="space-y-4">
       <h2 className="font-semibold">Review your setup</h2>
+      <label className="block text-sm">Auto-pull interval (minutes, 0 = off)<input type="number" min="0" step="1" className={inputClass} value={draft.autoPullMinutes ?? 0} onChange={(e) => setDraft((d) => ({ ...d, autoPullMinutes: Math.max(0, Math.floor(Number(e.target.value) || 0)) }))} /></label>
+      <p className="text-xs text-muted-foreground">Auto-pull only applies remote changes to fields without local edits. It never pushes. Run Sync to resolve conflicts.</p>
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm"><dt className="text-muted-foreground">Server</dt><dd className="break-all">{draft.baseUrl}</dd><dt className="text-muted-foreground">Project</dt><dd>{draft.projectIdentifier}</dd><dt className="text-muted-foreground">Transport</dt><dd>{draft.useDevProxy ? 'Development proxy' : 'Direct (requires CORS)'}</dd><dt className="text-muted-foreground">Fields</dt><dd>{fields.length} available · {draft.mapping.extraFields.length} additional fields imported</dd></dl>
       <ul className="space-y-1 text-sm">{syncTaskFields.filter((f) => draft.mapping.fields[f.key]).map((f) => <li key={f.key}>{f.label} → {fields.find((r) => r.key === draft.mapping.fields[f.key])?.label ?? draft.mapping.fields[f.key]}</li>)}</ul>
-      <p className="rounded-md bg-muted p-3 text-sm">Save &amp; Get Tasks merges Redmine issues into the current schedule, updating linked tasks. Local-only tasks are kept. Sync to Redmine remains a separate push action.</p>
+      <p className="rounded-md bg-muted p-3 text-sm">Save &amp; Get Tasks merges Redmine issues into the current schedule, updating linked tasks. Local-only tasks are kept. Use Sync to merge local and Redmine changes with per-field conflict resolution.</p>
       {warnings.length > 0 && <p className="text-xs text-amber-600">{warnings.join(' ')}</p>}
     </section>}
     {busy && <p role="status" className="mt-3 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{step === 2 ? 'Discovering fields…' : 'Connecting…'}</p>}

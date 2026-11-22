@@ -76,7 +76,7 @@ describe('fetchIssues', () => {
     expect(mock).toHaveBeenCalledTimes(1)
     const [url, init] = mock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe(
-      'https://redmine.example.com/issues.json?limit=100&offset=0&include=relations&status_id=*&project_id=my%20proj'
+      'https://redmine.example.com/issues.json?limit=100&offset=0&include=relations&status_id=*&project_id=my%20proj&sort=updated_on:asc,id:asc'
     )
     expect((init.headers as Record<string, string>)['X-Redmine-API-Key']).toBe('secret-key')
   })

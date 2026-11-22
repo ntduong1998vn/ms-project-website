@@ -10,6 +10,7 @@ import type {
 import {
   buildIssuePayload,
   flattenRedmineIssue,
+  parseCustomFieldKey,
   redmineStandardFields,
 } from '@/lib/integrations/redmine/fields'
 import type {
@@ -70,8 +71,8 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     : ''
 
   // status_id=* is required — Redmine's default filter returns open issues only
-  function issuesPath(offset: number): string {
-    return `/issues.json?limit=${PAGE_LIMIT}&offset=${offset}&include=relations&status_id=*${projectParam}`
+  function issuesPath(offset: number, updatedSince?: string): string {
+    return `/issues.json?limit=${PAGE_LIMIT}&offset=${offset}&include=relations&status_id=*${projectParam}&sort=updated_on:asc,id:asc${updatedSince ? `&updated_on=${encodeURIComponent('>=' + updatedSince)}` : ''}`
   }
 
   async function testConnection(): Promise<string> {
@@ -81,11 +82,11 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     return login
   }
 
-  async function fetchIssues(): Promise<RemoteIssue[]> {
+  async function fetchIssues(options?: { updatedSince?: string }): Promise<RemoteIssue[]> {
     const issues: RemoteIssue[] = []
     let offset = 0
     for (;;) {
-      const json = await request<RedmineIssuesResponse>(issuesPath(offset))
+      const json = await request<RedmineIssuesResponse>(issuesPath(offset, options?.updatedSince))
       const page = json?.issues ?? []
       for (const issue of page) issues.push(flattenRedmineIssue(issue))
       offset += page.length
@@ -107,10 +108,35 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     return String(issueId)
   }
 
-  async function updateIssue(key: string, task: ITask, ctx: PushContext): Promise<void> {
+  async function updateIssue(key: string, task: ITask, ctx: PushContext, remoteKeys?: ReadonlySet<string>): Promise<void> {
+    if (remoteKeys?.size === 0) return
+    const mapping = remoteKeys ? {
+      fields: Object.fromEntries(Object.entries(ctx.mapping.fields).map(([field, remote]) => [field, remote && remoteKeys.has(remote) ? remote : null])) as PushContext['mapping']['fields'],
+      extraFields: ctx.mapping.extraFields.filter((key) => remoteKeys.has(key)),
+    } : ctx.mapping
+    const issue = buildIssuePayload(task, { ...ctx, mapping }, 'update')
+    if (remoteKeys) {
+      const writeKeys: Record<string, string> = { parent_id: 'parent_issue_id', assigned_to: 'assigned_to_id', status: 'status_id', tracker: 'tracker_id', priority: 'priority_id', fixed_version: 'fixed_version_id' }
+      const wireKey = (key: string) => writeKeys[key] ?? key
+      const clear = (key: string) => {
+        const id = parseCustomFieldKey(key)
+        if (id === null) issue[wireKey(key)] = ''
+        else {
+          const custom = (issue.custom_fields ?? []) as Array<{ id: number; value: unknown }>
+          issue.custom_fields = [...custom.filter((field) => field.id !== id), { id, value: ctx.descriptors.find((field) => field.key === key)?.multiple ? [] : '' }]
+        }
+      }
+      if (mapping.fields.resources && !task.resources?.length) clear(mapping.fields.resources)
+      if (mapping.fields.parent && task.parent == null) clear(mapping.fields.parent)
+      for (const key of remoteKeys) {
+        const id = parseCustomFieldKey(key)
+        const written = id === null ? Object.hasOwn(issue, wireKey(key)) : (issue.custom_fields as Array<{ id: number }> | undefined)?.some((field) => field.id === id)
+        if (!written) throw new Error(`Field ${key} has no writable Redmine value.`)
+      }
+    }
     await request<unknown>(`/issues/${encodeURIComponent(key)}.json`, {
       method: 'PUT',
-      body: JSON.stringify({ issue: buildIssuePayload(task, ctx, 'update') }),
+      body: JSON.stringify({ issue }),
     })
   }
 
