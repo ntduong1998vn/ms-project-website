@@ -3,6 +3,7 @@ import { Popover } from 'radix-ui'
 import type { IApi } from '@svar-ui/react-gantt'
 import { ArrowDownNarrowWide, ArrowUpNarrowWide, Check, ListFilter, Search, X } from 'lucide-react'
 
+import { cn } from '@/lib/utils'
 import {
   BLANKS_OPTION,
   DATE_OP_LABELS,
@@ -207,9 +208,10 @@ export function ColumnFilterHeader({
             type="button"
             aria-label={`Filter ${title}`}
             aria-pressed={hasActiveFilter}
-            className={`relative shrink-0 rounded p-0.5 outline-none transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-primary ${
+            className={cn(
+              'relative shrink-0 rounded p-0.5 outline-none transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-primary',
               hasActiveFilter ? 'bg-primary/10 text-primary' : 'text-muted-foreground'
-            }`}
+            )}
             onClick={stop}
             onKeyDown={stop}
           >
@@ -289,7 +291,7 @@ export function ColumnFilterHeader({
                             value={valueSearch}
                             onChange={(e) => setValueSearch(e.target.value)}
                             placeholder="Search values..."
-                            className={`${inputClass} pl-6`}
+                            className={cn(inputClass, 'pl-6')}
                           />
                         </div>
                         <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-background p-1">
@@ -317,7 +319,7 @@ export function ColumnFilterHeader({
                                     onChange={() => toggleValue(opt)}
                                     className="h-3.5 w-3.5 rounded border-border"
                                   />
-                                  <span className={`flex-1 truncate ${opt === BLANKS_OPTION ? 'italic text-muted-foreground' : ''}`}>
+                                  <span className={cn('flex-1 truncate', opt === BLANKS_OPTION && 'italic text-muted-foreground')}>
                                     {opt}
                                   </span>
                                   {counts?.[opt] != null && (
@@ -472,9 +474,10 @@ function MenuButton({
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors outline-none focus-visible:ring-1 focus-visible:ring-primary ${
+      className={cn(
+        'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors outline-none focus-visible:ring-1 focus-visible:ring-primary',
         active ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-      }`}
+      )}
     >
       {icon}
       <span className="flex-1">{children}</span>
