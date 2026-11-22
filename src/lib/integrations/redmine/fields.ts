@@ -79,7 +79,7 @@ export function flattenRedmineIssue(issue: RedmineIssue): RemoteIssue {
       : cf.value
   }
 
-  const successors: Array<{ key: string; delay: number }> = []
+  const successors: Array<{ id: number; key: string; delay: number }> = []
   const seen = new Set<number>()
   for (const rel of issue.relations ?? []) {
     let successorId: number | null = null
@@ -90,7 +90,7 @@ export function flattenRedmineIssue(issue: RedmineIssue): RemoteIssue {
     }
     if (successorId === null || successorId === issue.id || seen.has(rel.id)) continue
     seen.add(rel.id)
-    successors.push({ key: String(successorId), delay: rel.delay ?? 0 })
+    successors.push({ id: rel.id, key: String(successorId), delay: rel.delay ?? 0 })
   }
   fields.successors = successors
 

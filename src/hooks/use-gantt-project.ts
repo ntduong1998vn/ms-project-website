@@ -12,6 +12,7 @@ import { parseClipboardTable } from '@/lib/clipboard'
 import { addTaskAtPlacement, buildDependencyChain, collectTaskSubtreeIds, getNextNumericTaskId, isTaskParentAllowed, moveTaskAtPlacement, removeLinksTouching, resequenceProject, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
 import { computeCriticalPath } from '@/lib/critical-path'
 import { createProvider } from '@/lib/integrations'
+import { RedmineCorsError } from '@/lib/integrations/redmine/client'
 import { effectiveFields, applyIntegrationMetadata, loadIntegrationSettings, saveIntegrationSettings } from '@/lib/integrations/settings'
 import { applyRemoteIssues, linkedTasks, unlinkedTasks } from '@/lib/integrations/sync'
 import { hasLocalChanges, mappingFingerprint, maxCursor, syncFetchCursor } from '@/lib/integrations/baseline'
@@ -102,6 +103,7 @@ export function useGanttProject() {
 
   const [api, setApi] = useState<IApi | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const integrationSettingsRef = useRef(integrationSettings)
   const calendarConfigRef = useRef(calendarConfig)
   const durationUnitRef = useRef(durationUnit)
   const tasksRef = useRef(tasks)
@@ -117,6 +119,7 @@ export function useGanttProject() {
   const deletedTaskIdsRef = useRef<Set<string>>(new Set())
 
   useLayoutEffect(() => {
+    integrationSettingsRef.current = integrationSettings
     calendarConfigRef.current = calendarConfig
     durationUnitRef.current = durationUnit
     tasksRef.current = tasks
@@ -125,7 +128,7 @@ export function useGanttProject() {
     selectedTaskIdRef.current = selectedTaskId
     selectedTaskIdsRef.current = selectedTaskIds
     deletedTaskIdsRef.current.clear()
-  }, [api, calendarConfig, durationUnit, tasks, links, selectedTaskId, selectedTaskIds])
+  }, [api, calendarConfig, durationUnit, tasks, links, selectedTaskId, selectedTaskIds, integrationSettings])
 
   useLayoutEffect(() => {
     if (!api) return
@@ -1178,6 +1181,7 @@ export function useGanttProject() {
 
   const handleSaveIntegrationSettings = useCallback(
     (settings: IntegrationSettings) => {
+      integrationSettingsRef.current = settings
       setIntegrationSettings(settings)
       saveIntegrationSettings(settings)
       upsertRedmineMembers(settings.knownMembers)
@@ -1199,7 +1203,20 @@ export function useGanttProject() {
     []
   )
 
-  const performRedmineGet = useCallback(async (baseTasks: ITask[], baseLinks: ILink[], overrideSettings?: IntegrationSettings) => {
+  const showIntegrationError = useCallback((error: unknown, retry?: (settings: IntegrationSettings) => Promise<void>) => {
+    toast.error(error instanceof Error ? error.message : String(error), error instanceof RedmineCorsError ? {
+      action: { label: 'Use proxy', onClick: () => {
+        const settings = { ...integrationSettingsRef.current, useDevProxy: true }
+        integrationSettingsRef.current = settings
+        setIntegrationSettings(settings)
+        saveIntegrationSettings(settings)
+        if (retry) void retry(settings)
+        else toast.info('Proxy enabled. Retry the Redmine operation.')
+      } },
+    } : undefined)
+  }, [])
+
+  const performRedmineGet = useCallback(async function performGet(baseTasks: ITask[], baseLinks: ILink[], overrideSettings?: IntegrationSettings): Promise<void> {
     if (busyRef.current) return
     busyRef.current = true
     setIntegrationBusy('get')
@@ -1248,12 +1265,12 @@ export function useGanttProject() {
       saveIntegrationSettings(syncedSettings)
       toast.success(`Redmine get complete: ${result.inserted} inserted, ${result.updated} updated.`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      showIntegrationError(err, (settings) => performGet(baseTasks, baseLinks, settings))
     } finally {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, isAutoSchedule, resourceList])
+  }, [calendarConfig, durationUnit, integrationSettings, isAutoSchedule, resourceList, showIntegrationError])
 
   const handleSaveAndGetIntegration = useCallback((settings: IntegrationSettings) => {
     handleSaveIntegrationSettings(settings)
@@ -1345,7 +1362,7 @@ export function useGanttProject() {
       })
       toast.success(`Redmine push complete: ${pushed.size} issue(s) created.`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      showIntegrationError(err)
     } finally {
       // Write back keys for issues created before any mid-loop failure so a
       // retry does not duplicate them; functional update preserves edits made
@@ -1362,13 +1379,13 @@ export function useGanttProject() {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks])
+  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, showIntegrationError])
 
   const finishSync = async (session: NonNullable<typeof pendingSync>, choices: Record<string, SyncChoice>) => {
     try {
       const provider = createProvider(session.settings)
-      const result = await executeSync(session.plan, choices, (key, task, keys) => provider.updateIssue(key, task, session.ctx, keys))
-      setTasks((current) => mergeSyncTasks(session.plan.tasks, current, result.tasks, session.settings.mapping, { ...session.plan, acceptedFields: result.acceptedFields }))
+      const result = await executeSync(session.plan, choices, (key, task, keys) => provider.updateIssue(key, task, session.ctx, keys), provider)
+      setTasks((current) => mergeSyncTasks(session.plan.tasks, current, result.tasks, session.settings.mapping, { ...session.plan, links: result.links, acceptedFields: result.acceptedFields }))
       setLinks(result.links)
       setResourceList(result.resources)
       if (result.report.failed.length === 0 && (!session.plan.autoPull || session.plan.conflicts.length === 0)) {
@@ -1382,7 +1399,7 @@ export function useGanttProject() {
       } else setSyncReport(result.report)
       setPendingSync(null)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
+      showIntegrationError(error)
     } finally {
       busyRef.current = false
       setIntegrationBusy(null)
@@ -1418,7 +1435,7 @@ export function useGanttProject() {
       if (plan.conflicts.length && !autoPull) setPendingSync(session)
       else await finishSync(session, {})
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
+      showIntegrationError(error)
       busyRef.current = false
       setIntegrationBusy(null)
     }
@@ -1428,7 +1445,7 @@ export function useGanttProject() {
   const handleApplySync = async (choices: Record<string, SyncChoice>) => { if (pendingSync) await finishSync(pendingSync, choices) }
   const handleCancelSync = () => { setPendingSync(null); busyRef.current = false; setIntegrationBusy(null) }
   const handleRetrySync = () => { if (syncReport) void runRedmineSync(false, new Set(syncReport.failed.map((failure) => failure.key))) }
-  const dirtySyncCount = linkedTasks(tasks, 'redmine').filter((task) => hasLocalChanges(task, integrationSettings.mapping, tasks)).length
+  const dirtySyncCount = linkedTasks(tasks, 'redmine').filter((task) => hasLocalChanges(task, integrationSettings.mapping, tasks, links, calendarConfig.workingHoursPerDay, durationUnit)).length
 
   const autoPullRef = useRef(runRedmineSync)
   useEffect(() => { autoPullRef.current = runRedmineSync })
@@ -1455,12 +1472,12 @@ export function useGanttProject() {
         `Project info: ${meta.members.length} members, ${meta.fields.length} fields, ${meta.trackers.length} trackers.`
       )
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      showIntegrationError(err)
     } finally {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [integrationSettings, upsertRedmineMembers])
+  }, [integrationSettings, upsertRedmineMembers, showIntegrationError])
 
   const totalTasks = tasks.filter((t) => t.type !== 'summary').length
   const summaryTasks = tasks.filter((t) => t.type === 'summary').length

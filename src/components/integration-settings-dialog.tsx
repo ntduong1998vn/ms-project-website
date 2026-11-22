@@ -7,6 +7,7 @@ import { syncTaskFields } from '@/lib/integrations/fields'
 import { applyIntegrationMetadata, effectiveFields, invalidateIntegrationMetadata } from '@/lib/integrations/settings'
 import { createProvider } from '@/lib/integrations'
 import { importCustomFieldSchema } from '@/lib/integrations/redmine/schema'
+import { RedmineCorsError } from '@/lib/integrations/redmine/client'
 import type { IntegrationSettings, RemoteFieldDescriptor, RemoteFieldValueType, RemoteProjectMetadata, SyncTaskField } from '@/lib/integrations/types'
 
 interface IntegrationSettingsDialogProps {
@@ -40,6 +41,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
   const [message, setMessage] = useState('')
   const [warnings, setWarnings] = useState<string[]>([])
   const [error, setError] = useState('')
+  const [proxySuggested, setProxySuggested] = useState(false)
   const [projects, setProjects] = useState<Array<{ id: number; identifier: string; name: string }>>([])
   const [search, setSearch] = useState('')
   const [metadataReady, setMetadataReady] = useState(false)
@@ -73,7 +75,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
       createProvider(request.settings).listProjects().then((items) => {
         if (!cancelled) setProjects(items)
       }).catch((err: unknown) => {
-        if (!cancelled) setError('Project list: ' + (err instanceof Error ? err.message : String(err)) + ' — use the manual identifier below.')
+        if (!cancelled) { setError('Project list: ' + (err instanceof Error ? err.message : String(err)) + ' — use the manual identifier below.'); setProxySuggested(err instanceof RedmineCorsError) }
       }).finally(() => { if (!cancelled) setBusy(false) })
     } else {
       onFetchMetadata(request.settings).then((meta) => {
@@ -82,13 +84,14 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
         setWarnings(meta.warnings)
         setMetadataReady(true)
       }).catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        if (!cancelled) { setError(err instanceof Error ? err.message : String(err)); setProxySuggested(err instanceof RedmineCorsError) }
       }).finally(() => { if (!cancelled) setBusy(false) })
     }
     return () => { cancelled = true }
   }, [request, onFetchMetadata])
 
   function updateConnection(patch: Partial<IntegrationSettings>) {
+    setProxySuggested(false)
     setDraft((d) => invalidateIntegrationMetadata(d, patch))
     setError('')
     setWarnings([])
@@ -100,6 +103,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
   }
 
   async function test() {
+    setProxySuggested(false)
     setBusy(true)
     setTested(false)
     setError('')
@@ -107,7 +111,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
       const name = await onTestConnection(draft)
       setMessage('Connected as ' + name)
       setTested(true)
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); setProxySuggested(err instanceof RedmineCorsError) }
     finally { setBusy(false) }
   }
 
@@ -154,8 +158,8 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
       <h2 className="font-semibold">Connection</h2>
       <label className="block text-sm">Redmine URL<input className={inputClass} value={draft.baseUrl} placeholder="https://redmine.example.com" disabled={busy} onChange={(e) => updateConnection({ baseUrl: e.target.value })} /></label>
       <label className="block text-sm">API key<input className={inputClass} type="password" value={draft.apiKey} disabled={busy} onChange={(e) => updateConnection({ apiKey: e.target.value })} /></label>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.useDevProxy} disabled={busy} onChange={(e) => updateConnection({ useDevProxy: e.target.checked })} /> Use dev proxy</label>
-      <p className="text-xs text-muted-foreground">Dev only — bypasses CORS through Vite. Production needs a CORS-enabled Redmine or a deployed proxy. Your API key is stored in this browser.</p>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.useDevProxy} disabled={busy} onChange={(e) => updateConnection({ useDevProxy: e.target.checked })} /> Use proxy (avoids CORS)</label>
+      <p className="text-xs text-muted-foreground">Bypasses CORS through Vite in development or the Vercel proxy in production. Public Redmine servers work without server configuration; HTTPS is recommended. Your API key is stored in this browser.</p>
       <Button disabled={busy || !draft.baseUrl.trim() || !draft.apiKey.trim()} onClick={() => void test()}>Test Connection</Button>
       {message && <p role="status" className="text-sm text-green-600">{message}</p>}
     </section>}
@@ -197,13 +201,14 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
       <h2 className="font-semibold">Review your setup</h2>
       <label className="block text-sm">Auto-pull interval (minutes, 0 = off)<input type="number" min="0" step="1" className={inputClass} value={draft.autoPullMinutes ?? 0} onChange={(e) => setDraft((d) => ({ ...d, autoPullMinutes: Math.max(0, Math.floor(Number(e.target.value) || 0)) }))} /></label>
       <p className="text-xs text-muted-foreground">Auto-pull only applies remote changes to fields without local edits. It never pushes. Run Sync to resolve conflicts.</p>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm"><dt className="text-muted-foreground">Server</dt><dd className="break-all">{draft.baseUrl}</dd><dt className="text-muted-foreground">Project</dt><dd>{draft.projectIdentifier}</dd><dt className="text-muted-foreground">Transport</dt><dd>{draft.useDevProxy ? 'Development proxy' : 'Direct (requires CORS)'}</dd><dt className="text-muted-foreground">Fields</dt><dd>{fields.length} available · {draft.mapping.extraFields.length} additional fields imported</dd></dl>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm"><dt className="text-muted-foreground">Server</dt><dd className="break-all">{draft.baseUrl}</dd><dt className="text-muted-foreground">Project</dt><dd>{draft.projectIdentifier}</dd><dt className="text-muted-foreground">Transport</dt><dd>{draft.useDevProxy ? 'Proxy (avoids CORS)' : 'Direct (requires CORS)'}</dd><dt className="text-muted-foreground">Fields</dt><dd>{fields.length} available · {draft.mapping.extraFields.length} additional fields imported</dd></dl>
       <ul className="space-y-1 text-sm">{syncTaskFields.filter((f) => draft.mapping.fields[f.key]).map((f) => <li key={f.key}>{f.label} → {fields.find((r) => r.key === draft.mapping.fields[f.key])?.label ?? draft.mapping.fields[f.key]}</li>)}</ul>
       <p className="rounded-md bg-muted p-3 text-sm">Save &amp; Get Tasks merges Redmine issues into the current schedule, updating linked tasks. Local-only tasks are kept. Use Sync to merge local and Redmine changes with per-field conflict resolution.</p>
       {warnings.length > 0 && <p className="text-xs text-amber-600">{warnings.join(' ')}</p>}
     </section>}
     {busy && <p role="status" className="mt-3 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{step === 2 ? 'Discovering fields…' : 'Connecting…'}</p>}
     {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+    {error && proxySuggested && !draft.useDevProxy && <Button className="mt-2" onClick={() => { updateConnection({ useDevProxy: true }); setStep(0) }}>Use proxy</Button>}
     <footer className="mt-5 flex justify-between gap-2 border-t border-border pt-4">
       <Button variant="outline" disabled={busy || step === 0} onClick={() => goTo(step - 1)}>Back</Button>
       {step < 3 ? <Button disabled={busy || (step === 0 && !tested) || (step === 1 && !draft.projectIdentifier.trim()) || (step === 2 && (!metadataReady || !draft.mapping.fields.text))} onClick={() => goTo(step + 1)}>Next</Button> : <div className="flex gap-2"><Button variant="outline" onClick={() => save(false)}>Save</Button><Button onClick={() => save(true)}>Save &amp; Get Tasks</Button></div>}

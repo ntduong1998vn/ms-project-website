@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ITask } from '@svar-ui/react-gantt'
 import { createProvider } from '@/lib/integrations'
-import { createRedmineProvider } from '@/lib/integrations/redmine/client'
+import { createRedmineProvider, RedmineCorsError } from '@/lib/integrations/redmine/client'
 import { defaultIntegrationSettings } from '@/lib/integrations/settings'
 import type { IntegrationSettings, PushContext } from '@/lib/integrations/types'
 import { defaultFieldMapping } from '@/lib/integrations/fields'
@@ -118,8 +118,17 @@ describe('request error handling', () => {
   it('translates network TypeErrors into a CORS hint', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))))
     await expect(createRedmineProvider(settings()).testConnection()).rejects.toThrow(
-      'Cannot reach Redmine. Check the URL, or enable "Use dev proxy" (CORS).'
+      'Cannot reach Redmine. Check the URL or enable "Use proxy (avoids CORS)".'
     )
+  })
+
+  it('offers the production proxy action only for direct network failures', async () => {
+    vi.stubEnv('DEV', false)
+    try {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))))
+      await expect(createRedmineProvider(settings()).testConnection()).rejects.toBeInstanceOf(RedmineCorsError)
+      await expect(createRedmineProvider(settings({ useDevProxy: true })).testConnection()).rejects.not.toBeInstanceOf(RedmineCorsError)
+    } finally { vi.unstubAllEnvs() }
   })
 
   it('rethrows non-TypeError fetch failures unchanged', async () => {
@@ -129,6 +138,14 @@ describe('request error handling', () => {
 })
 
 describe('dev proxy mode', () => {
+  it('uses the deployed proxy in production with the saved useDevProxy flag', async () => {
+    vi.stubEnv('DEV', false)
+    try {
+      const mock = stubFetch(() => jsonResponse({ user: { id: 1, login: 'alice' } }))
+      await createRedmineProvider(settings({ useDevProxy: true })).testConnection()
+      expect(mock.mock.calls[0][0]).toBe('/api/redmine-proxy/users/current.json')
+    } finally { vi.unstubAllEnvs() }
+  })
   it('routes through /redmine-proxy with the x-redmine-target header', async () => {
     const mock = stubFetch(() => jsonResponse({ user: { id: 1, login: 'alice' } }))
     await createRedmineProvider(settings({ useDevProxy: true })).testConnection()

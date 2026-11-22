@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/redmine-proxy/:path*",
+      "destination": "/api/redmine-proxy?path=:path*"
+    }
+  ]
+}

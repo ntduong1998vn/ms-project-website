@@ -125,8 +125,8 @@ describe('flattenRedmineIssue', () => {
     }))
 
     expect(remote.fields.successors).toEqual([
-      { key: '11', delay: 2 },
-      { key: '12', delay: 0 },
+      { id: 1, key: '11', delay: 2 },
+      { id: 2, key: '12', delay: 0 },
     ])
   })
 
