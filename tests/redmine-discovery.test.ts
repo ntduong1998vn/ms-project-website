@@ -39,7 +39,8 @@ describe('non-admin discovery', () => {
     const meta = await provider.fetchProjectMetadata()
     expect(meta.members).toHaveLength(2)
     expect(meta.trackers).toEqual([{ id: 1, name: 'Task' }])
-    expect(meta.warnings.join(' ')).toContain('403')
+    expect(meta.warnings).toHaveLength(1)
+    expect(meta.warnings.join(' ')).not.toContain('Redmine 403')
     expect(meta.warnings.join(' ')).toContain('inferred from issues')
     expect(meta.fields.find((f) => f.key === 'cf_99')).toMatchObject({ valueType: 'string', label: 'Unseen (custom)' })
     expect(meta.fields.find((f) => f.key === 'cf_1')).toMatchObject({ valueType: 'number', options: undefined })
@@ -89,6 +90,14 @@ describe('non-admin discovery', () => {
     const meta = await createRedmineProvider(settings()).fetchProjectMetadata()
     expect(meta.warnings.join(' ')).toContain('Issue field inference')
   })
+
+  it('preserves raw schema warnings for non-403 failures', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/custom_fields.json')
+      ? response('Server unavailable', 500) : response({})))
+    const meta = await createRedmineProvider(settings()).fetchProjectMetadata()
+    expect(meta.warnings).toContain('Custom field schema: Redmine 500: "Server unavailable"')
+    expect(meta.warnings.join(' ')).toContain('inferred from issues')
+  })
 })
 
 describe('schema and effective fields', () => {
@@ -132,7 +141,8 @@ describe('schema and effective fields', () => {
     s.manualFields = [customFieldDescriptor({ id: 3, name: 'Manual' })]
     s.fieldOverrides = { cf_1: { valueType: 'number' } }
     expect(invalidateIntegrationMetadata(s, { projectIdentifier: 'demo' })).toEqual(s)
-    for (const patch of [{ baseUrl: 'https://new' }, { apiKey: 'new' }, { projectIdentifier: 'new' }]) {
+    expect(invalidateIntegrationMetadata(s, { apiKey: 'new' })).toEqual({ ...s, apiKey: 'new' })
+    for (const patch of [{ baseUrl: 'https://new' }, { projectIdentifier: 'new' }]) {
       const invalid = invalidateIntegrationMetadata(s, patch)
       expect(invalid).toMatchObject({ knownFields: [], manualFields: [], fieldOverrides: {}, trackerId: null })
       const meta = metadata()

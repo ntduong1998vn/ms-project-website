@@ -28,6 +28,15 @@ import { customFieldDescriptor } from './schema'
 
 const PAGE_LIMIT = 100
 
+class RedmineRequestError extends Error {
+  status: number
+
+  constructor(status: number, body: string) {
+    super(`Redmine ${status}: ${body.slice(0, 200)}`)
+    this.status = status
+  }
+}
+
 export function createRedmineProvider(settings: IntegrationSettings): IssueTrackerProvider {
   // Persisted useDevProxy must no-op outside dev — no proxy exists in prod builds.
   const useProxy = settings.useDevProxy && import.meta.env.DEV
@@ -49,7 +58,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     }
     if (!res.ok) {
       const body = await res.text().catch(() => '')
-      throw new Error(`Redmine ${res.status}: ${body.slice(0, 200)}`)
+      throw new RedmineRequestError(res.status, body)
     }
     // PUT /issues/:id.json answers 200 with an empty body — res.json() would throw
     const text = await res.text()
@@ -156,9 +165,11 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
 
   async function fetchProjectMetadata(): Promise<RemoteProjectMetadata> {
     const warnings: string[] = []
-    async function optional<T>(label: string, work: () => Promise<T>, fallback: T): Promise<T> {
+    async function optional<T>(label: string, work: () => Promise<T>, fallback: T, ignoreForbidden = false): Promise<T> {
       try { return await work() } catch (err) {
-        warnings.push(`${label}: ${err instanceof Error ? err.message : String(err)}`)
+        if (!(ignoreForbidden && err instanceof RedmineRequestError && err.status === 403)) {
+          warnings.push(`${label}: ${err instanceof Error ? err.message : String(err)}`)
+        }
         return fallback
       }
     }
@@ -169,7 +180,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
       optional('Statuses', () => request<RedmineIssueStatusesResponse>('/issue_statuses.json').then((j) => j?.issue_statuses ?? []), []),
       optional('Priorities', () => request<RedmineIssuePrioritiesResponse>('/enumerations/issue_priorities.json').then((j) => j?.issue_priorities ?? []), []),
       projectId ? optional('Versions', () => request<RedmineVersionsResponse>(`/projects/${encodeURIComponent(projectId)}/versions.json`).then((j) => j?.versions ?? []), []) : [],
-      optional<RedmineCustomField[] | null>('Custom field schema', () => request<RedmineCustomFieldsResponse>('/custom_fields.json').then((j) => j.custom_fields ?? []), null),
+      optional<RedmineCustomField[] | null>('Custom field schema', () => request<RedmineCustomFieldsResponse>('/custom_fields.json').then((j) => j.custom_fields ?? []), null, true),
     ])
     const trackers = project?.trackers ?? []
     const members = memberships.flatMap((m) => m.user ? [{ id: m.user.id, name: m.user.name }] : [])

@@ -37,7 +37,7 @@ export function effectiveFields(settings: IntegrationSettings): RemoteFieldDescr
 }
 
 export function invalidateIntegrationMetadata(settings: IntegrationSettings, patch: Partial<IntegrationSettings>): IntegrationSettings {
-  const changed = (['baseUrl', 'apiKey', 'projectIdentifier'] as const).some((key) => patch[key] !== undefined && patch[key] !== settings[key])
+  const changed = (['baseUrl', 'projectIdentifier'] as const).some((key) => patch[key] !== undefined && patch[key] !== settings[key])
   if (!changed) return { ...settings, ...patch }
   return {
     ...settings, ...patch, knownFields: [], knownTrackers: [], knownStatuses: [], knownPriorities: [], knownVersions: [], knownMembers: [],
