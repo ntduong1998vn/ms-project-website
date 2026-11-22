@@ -30,8 +30,19 @@ describe('production Redmine proxy', () => {
     expect((await proxyRedmine(request('https://redmine.test.evil'), 'https://redmine.test')).status).toBe(403)
     expect(fetch).not.toHaveBeenCalled()
   })
-  it.each(['file:///etc/passwd', 'ftp://redmine.test', 'https://user:password@redmine.test', 'not a URL'])('rejects invalid targets (%s)', async (target) => {
-    expect((await proxyRedmine(request(target), 'https://redmine.test')).status).toBe(400)
+  it.each([undefined, '', 'file:///etc/passwd', 'ftp://redmine.test', 'https://user:password@redmine.test', 'not a URL', 'https://redmine.test?x=1', 'https://redmine.test#fragment'])('explains missing or invalid target headers (%s)', async (target) => {
+    const input = request(target)
+    if (target === undefined) input.headers.delete('x-redmine-target')
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    for (const allowed of ['', 'https://redmine.test']) {
+      const result = await proxyRedmine(input, allowed)
+      expect(result.status).toBe(400)
+      expect(await result.json()).toEqual({ error: 'Missing or invalid x-redmine-target header (http(s) Redmine URL).' })
+    }
+    expect(fetch).not.toHaveBeenCalled()
+    expect(network.lookup).not.toHaveBeenCalled()
+    expect(network.httpsRequest).not.toHaveBeenCalled()
   })
   it.each(['POST', 'PUT', 'PATCH', 'DELETE'])('passes %s, query and body but strips cookies and hop headers', async (method) => {
     const fetch = vi.fn(async () => new Response('created', { status: 201, headers: { 'content-type': 'application/json', 'set-cookie': 'secret=1', connection: 'close' } }))
@@ -100,8 +111,12 @@ describe('production Redmine proxy', () => {
     query.delete('path')
     expect([...upstream.searchParams]).toEqual([...query])
   })
-  it('keeps DNS validation and pinning on rewritten open-mode requests', async () => {
-    const rewritten = new Request('https://app.test/api/redmine-proxy?path=users/current.json&include=memberships', { headers: request('https://public.test/redmine').headers })
+  it.each([
+    '/api/redmine-proxy?path=users/current.json&include=memberships',
+    '/api/redmine-proxy/users/current.json?include=memberships',
+    '/api/redmine-proxy/users/current.json?path=users%2Fcurrent.json&include=memberships',
+  ])('accepts Vercel URL shapes and keeps DNS validation and pinning: %s', async (route) => {
+    const rewritten = new Request('https://app.test' + route, { headers: request('https://public.test/redmine').headers })
     const result = await proxyRedmine(rewritten, '')
     expect(result.status).toBe(401)
     expect(String(network.httpsRequest.mock.calls[0][0])).toBe('https://public.test/redmine/users/current.json?include=memberships')
@@ -112,6 +127,13 @@ describe('production Redmine proxy', () => {
     network.lookup.mockResolvedValue([{ address: '169.254.169.254', family: 4 }])
     expect((await proxyRedmine(rewritten, '')).status).toBe(403)
     expect(network.httpsRequest).toHaveBeenCalledTimes(1)
+  })
+  it('accepts an original URL with a matching path parameter in allowlist mode', async () => {
+    const fetch = vi.fn(async () => new Response('{}'))
+    vi.stubGlobal('fetch', fetch)
+    const input = new Request('https://app.test/api/redmine-proxy/issues/101/relations.json?path=issues%2F101%2Frelations.json&offset=10', { headers: request().headers })
+    expect((await proxyRedmine(input, 'https://redmine.test')).status).toBe(200)
+    expect(String(fetch.mock.calls[0][0])).toBe('https://redmine.test/redmine/issues/101/relations.json?offset=10')
   })
   it.each([
     '', 'login', '../users/current.json', 'issues/../users/current.json', './issues.json',
@@ -138,11 +160,17 @@ describe('production Redmine proxy', () => {
     '/api/redmine-proxy?path=issues.json&path=users.json',
     '/api/redmine-proxy?path=issues.json&path=..%2Fusers.json',
     '/api/redmine-proxy/issues.json?path=users.json',
+    '/api/redmine-proxy/issues.json?path=',
+    '/api/redmine-proxy/issues.json?path=issues.json&path=issues.json',
+    '/api/redmine-proxy/issues.json?path=..%2Fissues.json',
+    '/api/redmine-proxy/issues.json?path=https%3A%2F%2Fevil.test%2Fissues.json',
+    '/api/redmine-proxy/issues/%252e%252e/users.json?path=issues%2F%252e%252e%2Fusers.json',
     '/api/redmine-proxy-other?path=issues.json',
     '/api/redmine-proxy/issues/%2f%2fevil.test/users.json',
   ])('rejects missing or ambiguous proxy routes: %s', async (route) => {
     const result = await proxyRedmine(new Request('https://app.test' + route, { headers: request().headers }), '')
     expect(result.status).toBe(400)
+    expect(await result.json()).toEqual({ error: 'Invalid Redmine proxy path; use a relative .json API path.' })
     expect(network.lookup).not.toHaveBeenCalled()
     expect(network.httpsRequest).not.toHaveBeenCalled()
   })

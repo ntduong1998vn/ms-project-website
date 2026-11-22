@@ -57,29 +57,37 @@ function fetchPublic(url: URL, method: string, headers: Headers, body: ArrayBuff
 
 export async function proxyRedmine(request: Request, allowedOrigins = process.env.REDMINE_ALLOWED_ORIGINS ?? ''): Promise<Response> {
   const allowed = allowedOrigins.split(',').map((origin) => origin.trim()).filter(Boolean)
+  let target: URL
+  try {
+    target = new URL(request.headers.get('x-redmine-target') ?? '')
+    if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.search || target.hash) throw new Error()
+  } catch {
+    return jsonError(400, 'Missing or invalid x-redmine-target header (http(s) Redmine URL).')
+  }
+  if (allowed.length && !allowed.includes(target.origin)) return jsonError(403, 'Redmine target is not in REDMINE_ALLOWED_ORIGINS.')
   let upstream: URL
   try {
-    const target = new URL(request.headers.get('x-redmine-target') ?? '')
-    if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.search || target.hash) throw new Error()
-    if (allowed.length && !allowed.includes(target.origin)) return jsonError(403, 'Redmine target is not in REDMINE_ALLOWED_ORIGINS.')
     const url = new URL(request.url)
     const prefix = '/api/redmine-proxy'
+    const paths = url.searchParams.getAll('path')
+    if (paths.length > 1) throw new Error()
+    const queryPath = paths.length ? decodeURIComponent(paths[0]) : undefined
     let path: string
     if (url.pathname === prefix) {
-      const paths = url.searchParams.getAll('path')
-      if (paths.length !== 1) throw new Error()
-      path = decodeURIComponent(paths[0])
-      url.searchParams.delete('path')
-    } else if (url.pathname.startsWith(prefix + '/') && !url.searchParams.has('path')) {
+      if (queryPath === undefined) throw new Error()
+      path = queryPath
+    } else if (url.pathname.startsWith(prefix + '/')) {
       path = decodeURIComponent(url.pathname.slice(prefix.length + 1))
+      if (queryPath !== undefined && queryPath !== path) throw new Error()
     } else throw new Error()
-    if (!/^[\w./-]+\.json$/.test(path) || path.split('/').some((segment) => !segment || segment === '.' || segment === '..')) return jsonError(400, 'Only relative Redmine .json API paths are allowed.')
+    if (queryPath !== undefined) url.searchParams.delete('path')
+    if (!/^[\w./-]+\.json$/.test(path) || path.split('/').some((segment) => !segment || segment === '.' || segment === '..')) throw new Error()
     upstream = new URL(target.origin + target.pathname.replace(/\/+$/, '') + '/' + path + url.search)
     if (upstream.origin !== target.origin) throw new Error()
     const pathname = decodeURIComponent(upstream.pathname)
-    if (!pathname.endsWith('.json') || [...pathname].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === '\\')) return jsonError(400, 'Only Redmine .json API paths are allowed.')
+    if (!pathname.endsWith('.json') || [...pathname].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === '\\')) throw new Error()
   } catch {
-    return jsonError(400, 'Invalid Redmine target or proxy path; use an http(s) URL.')
+    return jsonError(400, 'Invalid Redmine proxy path; use a relative .json API path.')
   }
   if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].includes(request.method)) return jsonError(405, 'Unsupported proxy method.')
   const headers = new Headers()
