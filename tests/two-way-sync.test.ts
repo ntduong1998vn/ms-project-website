@@ -54,6 +54,14 @@ describe('baseline and comparator', () => {
 })
 
 describe('three-way merge', () => {
+  it.each(['Environment', ''])('uses task labels and custom labels with a missing-label fallback (%s)', (label) => {
+    const plan = planSync({ tasks: [{ ...based(), text: 'Local', cf_1: 'Local' }], issues: [{ ...issue('Remote'), fields: { ...issue('Remote').fields, cf_1: 'Remote' } }],
+      links: [], resources: [], mapping, descriptors: [{ key: 'cf_1', label, kind: 'custom', valueType: 'string' }], calendar: defaultCalendarConfig, durationUnit: 'day' })
+    expect(plan.conflicts.map(({ field, fieldLabel }) => ({ field, fieldLabel }))).toEqual([
+      { field: 'text', fieldLabel: 'Task Name' }, { field: 'cf_1', fieldLabel: label || 'cf_1' },
+    ])
+    expect(makePlan().conflicts).toEqual([])
+  })
   it.each([
     ['local-only', 'Local', 'Base', 'Local', 1, 0],
     ['remote-only', 'Base', 'Remote', 'Remote', 0, 1],

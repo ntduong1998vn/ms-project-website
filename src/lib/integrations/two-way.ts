@@ -3,9 +3,10 @@ import type { GanttResource } from '@/types/gantt'
 import type { IntegrationFieldMapping, IssueTrackerProvider, PushContext, RemoteFieldDescriptor, RemoteIssue } from '@/lib/integrations/types'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import { applyRemoteIssues } from '@/lib/integrations/sync'
+import { syncTaskFields } from '@/lib/integrations/fields'
 import { snapshot, syncEqual, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
 
-export type SyncConflict = { id: string; issueKey: string; task: string; field: string; local: unknown; remote: unknown }
+export type SyncConflict = { id: string; issueKey: string; task: string; field: string; fieldLabel: string; local: unknown; remote: unknown }
 export type SyncChoice = 'local' | 'remote'
 type Change = { field: string; remoteKey: string; local: unknown; remote: unknown; action: 'push' | 'pull' | 'equal' | 'conflict' | 'skip'; conflictId: string }
 type TaskPlan = { original: ITask; remote?: RemoteIssue; changes: Change[] }
@@ -72,7 +73,9 @@ export function planSync(input: {
       let action: Change['action'] = equal ? 'equal' : localChanged && remoteChanged ? 'conflict' : localChanged && known ? 'push' : remoteChanged ? 'pull' : 'skip'
       if (input.autoPull && localChanged) action = remoteChanged && !equal ? 'conflict' : 'skip'
       const conflictId = JSON.stringify([key, field])
-      if (action === 'conflict') conflicts.push({ id: conflictId, issueKey: key, task: String(original.text ?? key), field, local, remote: value })
+      if (action === 'conflict') conflicts.push({ id: conflictId, issueKey: key, task: String(original.text ?? key), field,
+        fieldLabel: syncTaskFields.find((candidate) => candidate.key === field)?.label || descriptors.find((candidate) => candidate.key === remoteKey)?.label || field,
+        local, remote: value })
       return { field, remoteKey, local, remote: value, action, conflictId }
     })
     return { original, remote, changes }
