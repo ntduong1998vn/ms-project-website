@@ -9,6 +9,8 @@ import {
   isColumnFilterActive,
   isQuickFilterActive,
   matchesTaskPreset,
+  presetLabel,
+  toDayKey,
   taskDateFilter,
   taskFinishDate,
   taskNumberFilter,
@@ -305,5 +307,94 @@ describe('empty multi-value cells', () => {
     const result = collectDistinctOptions([task(1), task(2)], (t) => (t.id === 1 ? ['Alice'] : []))
     expect(result.hasBlank).toBe(true)
     expect(result.counts[BLANKS_OPTION]).toBe(1)
+  })
+})
+
+describe('filter edge cases', () => {
+  it('number filter parses numeric strings and open between', () => {
+    expect(taskNumberFilter('5', { kind: 'number', op: 'gt', value: 3 })).toBe(true)
+    expect(taskNumberFilter('', { kind: 'number', op: 'gt', value: 3 })).toBe(false)
+    expect(taskNumberFilter(5, { kind: 'number', op: 'between', value: 3 })).toBe(true)
+    expect(taskNumberFilter(5, null)).toBe(true)
+  })
+
+  it('date filter handles open ranges, strings and missing filters', () => {
+    expect(taskDateFilter(new Date(2026, 2, 10), null)).toBe(true)
+    expect(taskDateFilter(new Date(2026, 2, 10), { kind: 'date', op: 'between', from: '2026-03-10' })).toBe(true)
+    expect(taskDateFilter(new Date(2026, 2, 10), { kind: 'date', op: 'between', from: '2026-03-31', to: '2026-03-01' })).toBe(true)
+    expect(toDayKey('not a date')).toBeNull()
+    expect(toDayKey('')).toBeNull()
+    expect(toDayKey(new Date(2026, 0, 5).getTime())).toBe('2026-01-05')
+  })
+
+  it('finish date is null without dates', () => {
+    expect(taskFinishDate(task(1))).toBeNull()
+    expect(taskFinishDate(task(1, 'm', { type: 'milestone' }))).toBeNull()
+  })
+
+  it('presets and quick filter tolerate missing values', () => {
+    expect(matchesTaskPreset(task(1), undefined)).toBe(true)
+    expect(matchesTaskPreset(task(1), 'notStarted')).toBe(true)
+    expect(matchesTaskPreset(task(1), 'late')).toBe(false)
+    expect(taskQuickFilter(task(1), null)).toBe(true)
+    expect(taskQuickFilter(task(1), { search: '  ' })).toBe(true)
+    expect(taskQuickFilter({ id: 7 }, { search: 'x' })).toBe(false)
+  })
+
+  it('activity checks cover every kind', () => {
+    expect(isColumnFilterActive(null)).toBe(false)
+    expect(isColumnFilterActive({ kind: 'number', op: 'gt', value: null })).toBe(false)
+    expect(isColumnFilterActive({ kind: 'date', op: 'between', to: '2026-03-01' })).toBe(true)
+    expect(isColumnFilterActive({ kind: 'date', op: 'on', from: '2026-03-01' })).toBe(true)
+    expect(isColumnFilterActive({ mode: 'contains', text: 'a' })).toBe(true)
+    expect(isColumnFilterActive({ mode: 'contains' })).toBe(false)
+    expect(isQuickFilterActive(null)).toBe(false)
+    expect(isQuickFilterActive({ search: 'a' })).toBe(true)
+    expect(isQuickFilterActive({})).toBe(false)
+  })
+
+  it('describes every filter shape', () => {
+    expect(describeColumnFilter('Work', { kind: 'number', op: 'lt', value: 1.234 })).toBe('Work < 1.23')
+    expect(describeColumnFilter('Work', { kind: 'number', op: 'between', value: 2 })).toBe('Work ≥ 2')
+    expect(describeColumnFilter('Work', { kind: 'number', op: 'gt' })).toBe('Work > 0')
+    expect(describeColumnFilter('Start', { kind: 'date', op: 'on', from: '2026-03-01' })).toBe('Start on 2026-03-01')
+    expect(describeColumnFilter('Start', { kind: 'date', op: 'between', from: '2026-03-01' })).toBe(
+      'Start on or after 2026-03-01'
+    )
+    expect(describeColumnFilter('Start', { kind: 'date', op: 'between', to: '2026-03-01' })).toBe(
+      'Start on or before 2026-03-01'
+    )
+    expect(describeColumnFilter('Name', { mode: 'in', values: [] })).toBe('Name: none selected')
+    expect(describeColumnFilter('Name', { mode: 'in' })).toBe('Name: none selected')
+    expect(describeColumnFilter('Name', { mode: 'in', values: ['A', 'B'] })).toBe('Name: A, B')
+    expect(describeColumnFilter('Name', { mode: 'startsWith', text: ' de ' })).toBe('Name begins with "de"')
+    expect(describeColumnFilter('Name', { mode: 'contains' })).toBe('Name contains ""')
+  })
+
+  it('labels presets', () => {
+    expect(presetLabel('late')).toBe('Late Tasks')
+    expect(presetLabel('bogus' as never)).toBe('bogus')
+  })
+
+  it('matcher uses getters, header arrays and skips unusable filters', () => {
+    const columns = [
+      { id: 'name', getter: (t: ITask) => t.text, header: [{}, { filter: { config: { handler: taskTextFilter } } }] },
+      { id: 'plain', header: { text: 'Plain' } },
+      { id: 'noHeader' },
+    ]
+    const matcher = createTaskMatcher(
+      { name: { mode: 'equals', text: 'alpha' }, plain: { mode: 'contains', text: 'x' }, missing: 1, none: null },
+      columns
+    )
+    expect(matcher(task(1, 'Alpha'))).toBe(true)
+    expect(matcher(task(2, 'Beta'))).toBe(false)
+    expect(createTaskMatcher(undefined, columns)(task(1))).toBe(true)
+    expect(createTaskMatcher({ noHeader: { mode: 'contains', text: 'x' } }, columns)(task(1))).toBe(true)
+  })
+
+  it('collectDistinctOptions ignores null array entries as blanks', () => {
+    const result = collectDistinctOptions([task(1)], () => ['A', null])
+    expect(result.hasBlank).toBe(true)
+    expect(result.options).toEqual(['A'])
   })
 })
