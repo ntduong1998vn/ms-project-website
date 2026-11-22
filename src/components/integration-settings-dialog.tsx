@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Dialog } from 'radix-ui'
 import { Loader2, Plug, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { syncTaskFields } from '@/lib/integrations/fields'
 import { applyIntegrationMetadata, effectiveFields, invalidateIntegrationMetadata } from '@/lib/integrations/settings'
 import { createProvider } from '@/lib/integrations'
@@ -148,7 +149,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
       <Dialog.Close asChild><Button variant="ghost" size="icon" aria-label="Close"><X className="size-4" /></Button></Dialog.Close>
     </div>
     <Dialog.Description className="mt-2 text-sm text-muted-foreground">Connect your project and choose how Redmine fields map to your schedule.</Dialog.Description>
-    <ol className="my-5 flex gap-2" aria-label="Setup progress">{steps.map((label, i) => <li key={label} aria-current={i === step ? 'step' : undefined} className={`flex-1 rounded-md px-2 py-2 text-center text-xs ${i === step ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{i + 1}. {label}</li>)}</ol>
+    <ol className="my-5 flex gap-2" aria-label="Setup progress">{steps.map((label, i) => <li key={label} aria-current={i === step ? 'step' : undefined} className={cn('flex-1 rounded-md px-2 py-2 text-center text-xs', i === step ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>{i + 1}. {label}</li>)}</ol>
     {step === 0 && <section className="space-y-4">
       <h2 className="font-semibold">Connection</h2>
       <label className="block text-sm">Redmine URL<input className={inputClass} value={draft.baseUrl} placeholder="https://redmine.example.com" disabled={busy} onChange={(e) => updateConnection({ baseUrl: e.target.value })} /></label>
