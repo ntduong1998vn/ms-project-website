@@ -47,7 +47,7 @@ export function invalidateIntegrationMetadata(settings: IntegrationSettings, pat
 
 export function applyIntegrationMetadata(settings: IntegrationSettings, meta: RemoteProjectMetadata): IntegrationSettings {
   const keys = new Set([...meta.fields, ...settings.manualFields].map((f) => f.key))
-  const keep = (key: string) => !key.startsWith('cf_') || keys.has(key)
+  const keep = (key: string) => !meta.customFieldsComplete || !key.startsWith('cf_') || keys.has(key)
   return {
     ...settings, knownFields: meta.fields, knownTrackers: meta.trackers, knownStatuses: meta.statuses,
     knownPriorities: meta.priorities, knownVersions: meta.versions, knownMembers: meta.members,

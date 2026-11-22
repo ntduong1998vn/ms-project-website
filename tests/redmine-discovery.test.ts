@@ -9,7 +9,7 @@ import type { RemoteProjectMetadata } from '@/lib/integrations/types'
 
 const settings = () => ({ ...defaultIntegrationSettings(), baseUrl: 'https://redmine.test', projectIdentifier: 'demo' })
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
-const metadata = (): RemoteProjectMetadata => ({ warnings: [], fields: [], trackers: [], statuses: [], priorities: [], versions: [], members: [] })
+const metadata = (): RemoteProjectMetadata => ({ customFieldsComplete: true, warnings: [], fields: [], trackers: [], statuses: [], priorities: [], versions: [], members: [] })
 afterEach(() => vi.unstubAllGlobals())
 
 describe('non-admin discovery', () => {
@@ -38,6 +38,7 @@ describe('non-admin discovery', () => {
     const provider = createRedmineProvider(settings())
     const meta = await provider.fetchProjectMetadata()
     expect(meta.members).toHaveLength(2)
+    expect(meta.customFieldsComplete).toBe(true)
     expect(meta.trackers).toEqual([{ id: 1, name: 'Task' }])
     expect(meta.warnings).toHaveLength(1)
     expect(meta.warnings.join(' ')).not.toContain('Redmine 403')
@@ -65,6 +66,7 @@ describe('non-admin discovery', () => {
     }))
     const meta = await createRedmineProvider(settings()).fetchProjectMetadata()
     expect(pages).toBe(20)
+    expect(meta.customFieldsComplete).toBe(false)
     expect(meta.warnings.join(' ')).toContain('2000')
     expect(meta.fields.find((f) => f.key === 'cf_1')?.options).toBeUndefined()
   })
@@ -78,6 +80,7 @@ describe('non-admin discovery', () => {
     vi.stubGlobal('fetch', fetch)
     const meta = await createRedmineProvider(settings()).fetchProjectMetadata()
     expect(meta.fields.find((f) => f.key === 'cf_1')?.valueType).toBe('number')
+    expect(meta.customFieldsComplete).toBe(true)
     expect(meta.warnings.join(' ')).toContain('Memberships: Redmine 403')
     expect(fetch.mock.calls.some(([url]) => url.includes('/issues.json'))).toBe(false)
   })
@@ -97,6 +100,35 @@ describe('non-admin discovery', () => {
     const meta = await createRedmineProvider(settings()).fetchProjectMetadata()
     expect(meta.warnings).toContain('Custom field schema: Redmine 500: "Server unavailable"')
     expect(meta.warnings.join(' ')).toContain('inferred from issues')
+  })
+
+  it.each(['project', 'issues'])('preserves custom mappings when %s discovery fails', async (failure) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/custom_fields.json')) return response({}, 403)
+      if (url.includes('/projects/demo.json')) return failure === 'project' ? response({}, 500) : response({ project: { issue_custom_fields: [] } })
+      if (url.includes('/issues.json')) return failure === 'issues' ? response({}, 500) : response({ issues: [], total_count: 0 })
+      return response({})
+    }))
+    const meta = await createRedmineProvider(settings()).fetchProjectMetadata()
+    expect(meta.customFieldsComplete).toBe(false)
+    const s = settings()
+    s.mapping.fields.progress = 'cf_12'
+    s.mapping.extraFields = ['cf_12', 'status']
+    expect(applyIntegrationMetadata(s, meta).mapping).toEqual(s.mapping)
+  })
+
+  it('allows pruning after successful empty discovery', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/custom_fields.json')) return response({}, 403)
+      if (url.includes('/projects/demo.json')) return response({ project: { issue_custom_fields: [] } })
+      return response({ issues: [], total_count: 0 })
+    }))
+    const meta = await createRedmineProvider(settings()).fetchProjectMetadata()
+    expect(meta.customFieldsComplete).toBe(true)
+    const s = settings()
+    s.mapping.fields.progress = 'cf_12'
+    s.mapping.extraFields = ['cf_12', 'status']
+    expect(applyIntegrationMetadata(s, meta).mapping).toMatchObject({ fields: { progress: null }, extraFields: ['status'] })
   })
 })
 

@@ -35,6 +35,7 @@ export type RemoteIssue = {
 }
 
 export type RemoteProjectMetadata = {
+  customFieldsComplete: boolean
   warnings: string[]
   trackers: Array<{ id: number; name: string }>
   members: Array<{ id: number; name: string }>

@@ -128,9 +128,10 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     return paginated<{ id: number; identifier: string; name: string }>('/projects.json', 'projects')
   }
 
-  async function harvestCustomFieldDescriptors(warnings: string[]): Promise<RemoteFieldDescriptor[]> {
+  async function harvestCustomFieldDescriptors(warnings: string[]): Promise<{ fields: RemoteFieldDescriptor[]; complete: boolean }> {
     const byId = new Map<number, { field: RemoteFieldDescriptor; values: Set<string>; numeric: boolean; date: boolean; observed: boolean }>()
     let offset = 0
+    let complete = true
     for (;;) {
       const json = await request<RedmineIssuesResponse>(issuesPath(offset))
       const page = (json?.issues ?? []).slice(0, 2000 - offset)
@@ -153,14 +154,17 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
         }
       }
       offset += page.length
-      if (offset >= 2000 && offset < json.total_count) warnings.push('Custom field inference limited to 2000 issues.')
+      if (offset >= 2000 && offset < json.total_count) {
+        warnings.push('Custom field inference limited to 2000 issues.')
+        complete = false
+      }
       if (!page.length || offset >= (json?.total_count ?? offset) || offset >= 2000) break
     }
-    return [...byId.values()].map(({ field, values, numeric, date, observed }) => ({
+    return { complete, fields: [...byId.values()].map(({ field, values, numeric, date, observed }) => ({
       ...field,
       valueType: observed && numeric ? 'number' : observed && date ? 'date' : 'string',
       options: observed && !numeric && !date && values.size <= 30 ? [...values].map((v) => ({ id: v, label: v })) : undefined,
-    }))
+    })) }
   }
 
   async function fetchProjectMetadata(): Promise<RemoteProjectMetadata> {
@@ -203,6 +207,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     }
 
     let cfDescriptors: RemoteFieldDescriptor[]
+    let customFieldsComplete = customFields !== null
     if (customFields !== null) {
       cfDescriptors = customFields.filter((cf) => !cf.customized_type || cf.customized_type === 'issue').map((cf) => ({
         ...customFieldDescriptor(cf),
@@ -210,13 +215,15 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
       }))
     } else {
       warnings.push('Custom field schema needs admin — inferred from issues. Observed options may be incomplete.')
-      const harvested = await optional('Issue field inference', () => harvestCustomFieldDescriptors(warnings), [])
+      const harvested = await optional('Issue field inference', () => harvestCustomFieldDescriptors(warnings), null)
+      customFieldsComplete = Boolean(harvested?.complete && (!projectId || Array.isArray(project?.issue_custom_fields)))
       const fields = new Map((project?.issue_custom_fields ?? []).map((cf) => [`cf_${cf.id}`, { key: `cf_${cf.id}`, label: `${cf.name} (custom)`, kind: 'custom', valueType: 'string' } as RemoteFieldDescriptor]))
-      for (const field of harvested) fields.set(field.key, field)
+      for (const field of harvested?.fields ?? []) fields.set(field.key, field)
       cfDescriptors = [...fields.values()]
     }
 
     return {
+      customFieldsComplete,
       warnings,
       trackers: trackers.map((t) => ({ id: t.id, name: t.name })),
       members,
