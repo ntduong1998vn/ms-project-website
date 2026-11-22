@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ITask } from '@svar-ui/react-gantt'
-import { hasLocalChanges, mappingFingerprint, maxCursor, snapshot, syncEqual, syncFetchCursor, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
+import { ensureSyncIdentities, hasLocalChanges, mappingFingerprint, maxCursor, snapshot, syncEqual, syncFetchCursor, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
 import { executeSync, mergeSyncTasks, planSync, pushNewTasks } from '@/lib/integrations/two-way'
 import { defaultFieldMapping } from '@/lib/integrations/fields'
 import { defaultIntegrationSettings } from '@/lib/integrations/settings'
 import { createRedmineProvider } from '@/lib/integrations/redmine/client'
 import { applyRemoteIssues } from '@/lib/integrations/sync'
 import { defaultCalendarConfig } from '@/lib/scheduler'
+import { resequenceProject } from '@/lib/task-helpers'
 import type { IntegrationFieldMapping, PushContext, RemoteIssue } from '@/lib/integrations/types'
 
 const mapping: IntegrationFieldMapping = { fields: { ...Object.fromEntries(Object.keys(defaultFieldMapping().fields).map((key) => [key, null])) as IntegrationFieldMapping['fields'], text: 'subject', progress: 'done_ratio', details: 'description' }, extraFields: ['cf_1'] }
@@ -18,6 +19,32 @@ const response = (body: unknown) => new Response(JSON.stringify(body))
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('baseline and comparator', () => {
+  it.each([true, false])('keeps parent identity stable across resequencing (linked: %s)', async (linked) => {
+    const parentMapping = { ...mapping, fields: { ...mapping.fields, parent: 'parent_id' } }
+    const identified = ensureSyncIdentities([
+      { id: 10, text: 'Parent', ...(linked ? { externalSource: 'redmine', externalKey: '500' } : {}) },
+      { ...task(), id: 20, parent: 10 },
+      { id: 30, text: 'Other parent', externalSource: 'redmine', externalKey: '600' },
+    ])
+    const original = identified.map((t) => t.id === 20 ? withBaseline(t, parentMapping, undefined, identified) : t)
+    const tasks = resequenceProject([{ id: 50, text: 'Added before parent' }, ...original], [], null).tasks
+    const child = tasks.find((t) => t.externalKey === '101')!
+    expect(child.parent).toBe(2)
+    expect(taskBaseline(child)?.base.parent).toBe(linked ? 'remote:redmine:500' : `local:${identified[0].syncIdentity}`)
+    expect(hasLocalChanges(child, parentMapping, tasks)).toBe(false)
+    const plan = planSync({ tasks, issues: [], links: [], resources: [], mapping: parentMapping, descriptors: [], calendar: defaultCalendarConfig, durationUnit: 'day' })
+    const push = vi.fn()
+    const result = await executeSync(plan, {}, push)
+    expect(push).not.toHaveBeenCalled()
+    expect(hasLocalChanges(result.tasks.find((t) => t.externalKey === '101')!, parentMapping, result.tasks)).toBe(false)
+    expect(hasLocalChanges({ ...child, parent: 4 }, parentMapping, tasks)).toBe(true)
+    if (linked) {
+      const changed = planSync({ tasks, issues: [{ ...issue(), fields: { ...issue().fields, parent_id: '600' } }], links: [], resources: [], mapping: parentMapping, descriptors: [], calendar: defaultCalendarConfig, durationUnit: 'day' })
+      expect(changed.conflicts).toEqual([])
+      const pulled = await executeSync(changed, {}, push)
+      expect(pulled.tasks.find((t) => t.externalKey === '101')?.parent).toBe(4)
+    }
+  })
   it('requires a matching mapping fingerprint and complete baselines to reuse a cursor', () => {
     const settings = { ...defaultIntegrationSettings(), mapping, syncCursor: issue().updatedOn, syncMappingFingerprint: mappingFingerprint(mapping) }
     expect(syncFetchCursor(settings, [based()])).toBe(settings.syncCursor)
@@ -84,8 +111,8 @@ describe('three-way merge', () => {
   })
   it('clears obsolete open flags after remote reparenting without mutating the source', async () => {
     const parentMapping = { ...mapping, fields: { ...mapping.fields, parent: 'parent_id' } }
-    const parent = { id: 5, text: 'Former parent', open: true, type: 'summary' }
-    const child = withBaseline({ ...task(), parent: 5 }, parentMapping)
+    const [parent, originalChild] = ensureSyncIdentities([{ id: 5, text: 'Former parent', open: true, type: 'summary' }, { ...task(), parent: 5 }])
+    const child = withBaseline(originalChild, parentMapping, undefined, [parent, originalChild])
     const tasks = [parent, child]
     const plan = planSync({ tasks, issues: [{ ...issue(), fields: { ...issue().fields, parent_id: null } }], links: [], resources: [], mapping: parentMapping, descriptors: [], calendar: defaultCalendarConfig, durationUnit: 'day' })
     const result = await executeSync(plan, {}, vi.fn())

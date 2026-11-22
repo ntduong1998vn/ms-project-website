@@ -17,7 +17,7 @@ import {
   type ProjectCalendarConfig,
 } from '@/lib/scheduler'
 import { getNextNumericTaskId, hasParentCycle, sameTaskId } from '@/lib/task-helpers'
-import { withBaseline } from '@/lib/integrations/baseline'
+import { ensureSyncIdentities, withBaseline } from '@/lib/integrations/baseline'
 
 export function normalizeRemoteHierarchy(tasks: ITask[]): ITask[] {
   const types = new Map(tasks.map((task) => [String(task.id), task.type]))
@@ -408,7 +408,8 @@ export function applyRemoteIssues(
   // 9-10. Optional auto-schedule, then return counts.
   const scheduled = isAutoSchedule ? autoScheduleTasks(normalizedTasks, mergedLinks, calendarConfig, durationUnit) : normalizedTasks
   const fetched = new Map(issues.map((issue) => [issue.key, issue]))
-  const tasks = scheduled.map((task) => task.externalSource === providerId && fetched.has(String(task.externalKey))
-    ? withBaseline(task, mapping, fetched.get(String(task.externalKey))?.updatedOn) : task)
+  const identified = ensureSyncIdentities(scheduled)
+  const tasks = identified.map((task) => task.externalSource === providerId && fetched.has(String(task.externalKey))
+    ? withBaseline(task, mapping, fetched.get(String(task.externalKey))?.updatedOn, identified) : task)
   return { kind: 'success', tasks, links: mergedLinks, resources: nextResources, inserted, updated }
 }

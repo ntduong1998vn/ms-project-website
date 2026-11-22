@@ -1428,7 +1428,7 @@ export function useGanttProject() {
   const handleApplySync = async (choices: Record<string, SyncChoice>) => { if (pendingSync) await finishSync(pendingSync, choices) }
   const handleCancelSync = () => { setPendingSync(null); busyRef.current = false; setIntegrationBusy(null) }
   const handleRetrySync = () => { if (syncReport) void runRedmineSync(false, new Set(syncReport.failed.map((failure) => failure.key))) }
-  const dirtySyncCount = linkedTasks(tasks, 'redmine').filter((task) => hasLocalChanges(task, integrationSettings.mapping)).length
+  const dirtySyncCount = linkedTasks(tasks, 'redmine').filter((task) => hasLocalChanges(task, integrationSettings.mapping, tasks)).length
 
   const autoPullRef = useRef(runRedmineSync)
   useEffect(() => { autoPullRef.current = runRedmineSync })

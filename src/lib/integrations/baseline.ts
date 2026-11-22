@@ -39,7 +39,27 @@ export function mappingFingerprint(mapping: IntegrationFieldMapping): string {
 
 export function baselineHasField(task: ITask, field: string, remoteKey: string): boolean {
   const baseline = taskBaseline(task)
-  return !!baseline && Object.hasOwn(baseline.base, field) && baseline.mapping?.[field] === remoteKey
+  return !!baseline && Object.hasOwn(baseline.base, field) && baseline.mapping?.[field] === baselineFieldKey(field, remoteKey)
+}
+
+export function baselineFieldKey(field: string, remoteKey: string): string {
+  return field === 'parent' ? `${remoteKey}:identity` : remoteKey
+}
+
+export function ensureSyncIdentities(tasks: ITask[]): ITask[] {
+  return tasks.map((task) => task.syncIdentity || (task.externalSource && task.externalKey) ? task : { ...task, syncIdentity: crypto.randomUUID() })
+}
+
+export function syncValue(task: ITask, field: string, tasks: ITask[]): unknown {
+  if (field !== 'parent') return task[field]
+  if (task.parent == null || String(task.parent) === '0') return null
+  const parent = tasks.find((candidate) => String(candidate.id) === String(task.parent))
+  if (parent?.externalSource && parent.externalKey) return `remote:${parent.externalSource}:${parent.externalKey}`
+  return parent?.syncIdentity ? `local:${parent.syncIdentity}` : `unresolved:${task.parent}`
+}
+
+export function parentIdFromIdentity(identity: unknown, tasks: ITask[]): ITask['parent'] {
+  return tasks.find((candidate) => syncValue({ parent: candidate.id }, 'parent', tasks) === identity)?.id
 }
 
 export function syncFetchCursor(settings: IntegrationSettings, linked: ITask[]): string | undefined {
@@ -47,17 +67,17 @@ export function syncFetchCursor(settings: IntegrationSettings, linked: ITask[]):
     ? settings.syncCursor : undefined
 }
 
-export function snapshot(task: ITask, mapping: IntegrationFieldMapping): Record<string, unknown> {
-  return Object.fromEntries(syncFields(mapping).map(({ field }) => [field, structuredClone(task[field] ?? null)]))
+export function snapshot(task: ITask, mapping: IntegrationFieldMapping, tasks: ITask[] = []): Record<string, unknown> {
+  return Object.fromEntries(syncFields(mapping).map(({ field }) => [field, structuredClone(syncValue(task, field, tasks) ?? null)]))
 }
 
-export function withBaseline(task: ITask, mapping: IntegrationFieldMapping, updatedOn?: string): ITask {
-  return { ...task, externalSync: { updatedOn, base: snapshot(task, mapping), mapping: Object.fromEntries(syncFields(mapping).map(({ field, remoteKey }) => [field, remoteKey])) } }
+export function withBaseline(task: ITask, mapping: IntegrationFieldMapping, updatedOn?: string, tasks: ITask[] = []): ITask {
+  return { ...task, externalSync: { updatedOn, base: snapshot(task, mapping, tasks), mapping: Object.fromEntries(syncFields(mapping).map(({ field, remoteKey }) => [field, baselineFieldKey(field, remoteKey)])) } }
 }
 
-export function hasLocalChanges(task: ITask, mapping: IntegrationFieldMapping): boolean {
+export function hasLocalChanges(task: ITask, mapping: IntegrationFieldMapping, tasks: ITask[] = []): boolean {
   const baseline = taskBaseline(task)
-  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(task[field], baseline.base[field], field))
+  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(syncValue(task, field, tasks), baseline.base[field], field))
 }
 
 export function maxCursor(current: string | undefined, values: Array<string | undefined>): string | undefined {

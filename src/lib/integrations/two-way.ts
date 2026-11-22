@@ -5,7 +5,7 @@ import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import { autoScheduleTasks } from '@/lib/scheduler'
 import { applyRemoteIssues, normalizeRemoteHierarchy } from '@/lib/integrations/sync'
 import { syncTaskFields } from '@/lib/integrations/fields'
-import { baselineHasField, syncEqual, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
+import { baselineFieldKey, baselineHasField, ensureSyncIdentities, parentIdFromIdentity, syncEqual, syncFields, syncValue, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
 
 export type SyncConflict = { id: string; issueKey: string; task: string; field: string; fieldLabel: string; local: unknown; remote: unknown }
 export type SyncChoice = 'local' | 'remote'
@@ -22,7 +22,8 @@ export async function pushNewTasks(tasks: ITask[], provider: Pick<IssueTrackerPr
   for (const task of tasks) {
     const key = await provider.createIssue(task, ctx)
     ctx.keyByTaskId.set(String(task.id), key)
-    onCreated(withBaseline({ ...task, externalSource: 'redmine', externalKey: key }, ctx.mapping))
+    const linked = Array.from(ctx.keyByTaskId, ([id, externalKey]) => ({ id, externalSource: 'redmine', externalKey }))
+    onCreated(withBaseline({ ...task, externalSource: 'redmine', externalKey: key }, ctx.mapping, undefined, linked))
   }
 }
 
@@ -34,7 +35,7 @@ export function mergeSyncTasks(before: ITask[], current: ITask[], incoming: ITas
     const original = originals.get(String(task.id))
     const result = results.get(String(task.id))
     if (!original || !result) return task
-    const merged: ITask = { ...task, externalSync: result.externalSync }
+    const merged: ITask = { ...task, externalSync: result.externalSync, syncIdentity: result.syncIdentity ?? task.syncIdentity }
     for (const { field } of syncFields(mapping)) if (syncEqual(task[field], original[field], field)) merged[field] = result[field]
     return merged
   }), ...incoming.filter((task) => !originals.has(String(task.id)) && !ids.has(String(task.id)))])
@@ -46,12 +47,13 @@ export function planSync(input: {
   descriptors: RemoteFieldDescriptor[]; mapping: IntegrationFieldMapping
   calendar: ProjectCalendarConfig; durationUnit: 'day' | 'hour'; autoPull?: boolean; autoSchedule?: boolean
 }): SyncPlan {
-  const { tasks, links, resources, issues, descriptors, mapping, calendar, durationUnit } = input
+  const { links, resources, issues, descriptors, mapping, calendar, durationUnit } = input
+  const tasks = ensureSyncIdentities(input.tasks)
   const seed = tasks.map((task) => {
     const baseline = taskBaseline(task)
     if (!baseline) return task
     const copy = { ...task }
-    for (const { field, remoteKey } of syncFields(mapping)) if (baselineHasField(task, field, remoteKey)) copy[field] = structuredClone(baseline.base[field])
+    for (const { field, remoteKey } of syncFields(mapping)) if (baselineHasField(task, field, remoteKey)) copy[field] = field === 'parent' ? parentIdFromIdentity(baseline.base[field], tasks) : structuredClone(baseline.base[field])
     for (const field of ['start', 'end']) if (copy[field]) copy[field] = new Date(copy[field] as string)
     return copy
   })
@@ -70,10 +72,12 @@ export function planSync(input: {
     const changes = syncFields(mapping).map(({ field, remoteKey }): Change => {
       const local = original[field]
       const value = remoteTask?.[field]
+      const localValue = syncValue(original, field, tasks)
+      const remoteValue = remoteTask ? syncValue(remoteTask, field, remoteTasks) : undefined
       const known = baselineHasField(original, field, remoteKey)
-      const localChanged = !known || !syncEqual(local, baseline!.base[field], field)
-      const remoteChanged = remote && (!known || !syncEqual(value, baseline!.base[field], field))
-      const equal = remote && syncEqual(local, value, field)
+      const localChanged = !known || !syncEqual(localValue, baseline!.base[field], field)
+      const remoteChanged = remote && (!known || !syncEqual(remoteValue, baseline!.base[field], field))
+      const equal = remote && syncEqual(localValue, remoteValue, field)
       let action: Change['action'] = equal ? 'equal' : localChanged && remoteChanged ? 'conflict' : localChanged && known ? 'push' : remoteChanged ? 'pull' : 'skip'
       if (input.autoPull && localChanged) action = remoteChanged && !equal ? 'conflict' : 'skip'
       const conflictId = JSON.stringify([key, field])
@@ -113,8 +117,8 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
         if (action === 'skip') continue
         if (action === 'pull') { next[change.field] = structuredClone(change.remote); pulled = true }
         if (action === 'push') pushKeys.add(change.remoteKey)
-        base[change.field] = structuredClone(next[change.field] ?? null)
-        baseMapping[change.field] = change.remoteKey
+        base[change.field] = structuredClone(syncValue(next, change.field, [...plan.tasks, ...plan.inserted]) ?? null)
+        baseMapping[change.field] = baselineFieldKey(change.field, change.remoteKey)
       }
       try {
         if (pushKeys.size && !plan.autoPull) await push(key, next, pushKeys)
@@ -128,7 +132,7 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
       }
     }
   }))
-  const mergedTasks = normalizeRemoteHierarchy([...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => withBaseline(task, plan.mapping, taskBaseline(task)?.updatedOn))])
+  const mergedTasks = normalizeRemoteHierarchy([...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => withBaseline(task, plan.mapping, taskBaseline(task)?.updatedOn, [...plan.tasks, ...plan.inserted]))])
   return { tasks: plan.autoSchedule ? autoScheduleTasks(mergedTasks, plan.links, plan.calendar, plan.durationUnit) : mergedTasks,
     links: plan.links, resources: plan.resources, report }
 }
