@@ -47,6 +47,12 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
   const [newLabel, setNewLabel] = useState('')
 
   const fields = effectiveFields(draft)
+  const syncFields = [
+    ...fields.filter((f) => f.kind === 'custom' || draft.mapping.extraFields.includes(f.key)),
+    ...draft.mapping.extraFields.filter((key) => !fields.some((f) => f.key === key)).map((key): RemoteFieldDescriptor => ({
+      key, label: `${key} (unavailable)`, kind: key.startsWith('cf_') ? 'custom' : 'standard', valueType: 'string',
+    })),
+  ]
   const [request, setRequest] = useState<{ step: number; settings: IntegrationSettings } | null>(() => complete ? { step: 2, settings } : null)
 
   function goTo(next: number) {
@@ -171,17 +177,17 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
         {fields.filter((f) => compatible(key, f) || f.key === draft.mapping.fields[key]).map((f) => <option key={f.key} value={f.key}>{f.label} ({f.valueType})</option>)}
         {draft.mapping.fields[key] && !fields.some((f) => f.key === draft.mapping.fields[key]) && <option value={draft.mapping.fields[key]!}>{draft.mapping.fields[key]} (unavailable)</option>}
       </select></label>)}</div>
-      <h3 className="text-sm font-semibold">Custom fields</h3>
-      <p className="text-xs text-muted-foreground">Import copies values on Get Tasks. Overrides also control mapping, columns and writes. Observed options are not a complete server schema.</p>
-      {fields.filter((f) => f.kind === 'custom').map((f) => <div key={f.key} className="rounded-md border border-border p-3">
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.mapping.extraFields.includes(f.key)} onChange={(e) => { const checked = e.target.checked; setDraft((d) => ({ ...d, mapping: { ...d.mapping, extraFields: checked ? [...d.mapping.extraFields, f.key] : d.mapping.extraFields.filter((k) => k !== f.key) } })) }} />{f.label}<span className="ml-auto text-xs text-muted-foreground">{f.key} · {f.valueType}{f.multiple ? ' · multiple' : ''}</span></label>
-        <details className="mt-2"><summary className="cursor-pointer text-xs text-primary">Override {f.label}</summary><div className="mt-2 grid gap-3 sm:grid-cols-2">
+      <h3 className="text-sm font-semibold">Additional field sync</h3>
+      <p className="text-xs text-muted-foreground">Checked fields are imported on Get Tasks and written back on Sync to Redmine, even when hidden. Uncheck to disable additional-field sync; mapped fields are controlled above. Observed options are not a complete server schema.</p>
+      {syncFields.map((f) => <div key={f.key} className="rounded-md border border-border p-3">
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.mapping.extraFields.includes(f.key)} onChange={(e) => { const checked = e.target.checked; setDraft((d) => ({ ...d, mapping: { ...d.mapping, extraFields: checked ? [...d.mapping.extraFields, f.key] : d.mapping.extraFields.filter((k) => k !== f.key) } })) }} />Sync {f.label}<span className="ml-auto text-xs text-muted-foreground">{f.key} · {f.valueType}{f.multiple ? ' · multiple' : ''}</span></label>
+        {f.kind === 'custom' && <details className="mt-2"><summary className="cursor-pointer text-xs text-primary">Override {f.label}</summary><div className="mt-2 grid gap-3 sm:grid-cols-2">
           <label className="text-xs">Label<input className={inputClass} value={f.label} onChange={(e) => override(f.key, { label: e.target.value })} /></label>
           <label className="text-xs">Value type<select className={inputClass} value={f.valueType} onChange={(e) => override(f.key, { valueType: e.target.value as RemoteFieldValueType })}>{types.map((t) => <option key={t}>{t}</option>)}</select></label>
           <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={f.multiple ?? false} onChange={(e) => override(f.key, { multiple: e.target.checked })} />Multiple values</label>
           <label className="text-xs">Options (one per line)<textarea className={inputClass} value={draft.fieldOverrides[f.key]?.options?.join('\n') ?? f.options?.map((o) => String(o.id)).join('\n') ?? ''} onChange={(e) => override(f.key, { options: e.target.value ? e.target.value.split('\n') : [] })} /></label>
           <Button variant="outline" size="sm" onClick={() => setDraft((d) => ({ ...d, fieldOverrides: Object.fromEntries(Object.entries(d.fieldOverrides).filter(([key]) => key !== f.key)) }))}>Reset override</Button>
-        </div></details>
+        </div></details>}
       </div>)}
       <details><summary className="cursor-pointer text-sm font-medium">Add field by ID</summary><div className="mt-2 flex gap-2"><input aria-label="Custom field ID" className={inputClass} placeholder="ID" value={newId} onChange={(e) => setNewId(e.target.value)} /><input aria-label="Custom field label" className={inputClass} placeholder="Label (optional)" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} /><Button variant="outline" onClick={addManual}>Add</Button></div></details>
       <details><summary className="cursor-pointer text-sm font-medium">Import schema JSON</summary><p className="my-2 text-xs text-muted-foreground">Paste a /custom_fields.json response exported by an administrator. No admin access is needed here.</p><textarea aria-label="Schema JSON" className={inputClass} rows={4} value={schema} onChange={(e) => setSchema(e.target.value)} /><Button variant="outline" onClick={importSchema}>Import schema</Button></details>
