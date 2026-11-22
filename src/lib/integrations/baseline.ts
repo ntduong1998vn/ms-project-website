@@ -80,7 +80,8 @@ export function withBaseline(task: ITask, mapping: IntegrationFieldMapping, upda
 export function hasLocalChanges(task: ITask, mapping: IntegrationFieldMapping, tasks: ITask[] = [], links: ILink[] = [], hoursPerDay = 8, unit: 'day' | 'hour' = 'day'): boolean {
   const baseline = taskBaseline(task)
   const keys = new Set(tasks.filter((row) => row.externalSource === 'redmine').map((row) => String(row.externalKey)))
-  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(syncValue(task, field, tasks), baseline.base[field], field)) || !!(mapping.fields.successors && (baseline.relationsMapping !== mapping.fields.successors || !relationsEqual(localRelations(task, tasks, links, hoursPerDay, unit).relations, (baseline.relations ?? []).filter((row) => keys.has(row.key)))))
+  const local = mapping.fields.successors ? localRelations(task, tasks, links, hoursPerDay, unit) : undefined
+  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(syncValue(task, field, tasks), baseline.base[field], field)) || !!(local && (local.blocked || baseline.relationsMapping !== mapping.fields.successors || !relationsEqual(local.relations, (baseline.relations ?? []).filter((row) => keys.has(row.key)))))
 }
 
 export function maxCursor(current: string | undefined, values: Array<string | undefined>): string | undefined {

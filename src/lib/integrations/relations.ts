@@ -1,20 +1,22 @@
 import type { ILink, ITask } from '@svar-ui/react-gantt'
 import type { IssueTrackerProvider, RemoteRelation } from '@/lib/integrations/types'
 
-export function localRelations(task: ITask, tasks: ITask[], links: ILink[], hoursPerDay: number, unit: 'day' | 'hour'): { relations: RemoteRelation[]; skipped: string[] } {
+export function localRelations(task: ITask, tasks: ITask[], links: ILink[], hoursPerDay: number, unit: 'day' | 'hour'): { relations: RemoteRelation[]; skipped: string[]; blocked: boolean } {
   const relations: RemoteRelation[] = []
   const skipped: string[] = []
+  let blocked = false
   for (const link of links.filter((row) => String(row.source) === String(task.id))) {
     const target = tasks.find((row) => String(row.id) === String(link.target))
     if (!target?.externalKey || target.externalSource !== 'redmine' || link.type !== 'e2s') {
+      if (target?.externalSource === 'redmine' && target.externalKey) blocked = true
       skipped.push(`Successor ${target?.text ?? link.target}: ${link.type !== 'e2s' ? 'only finish-to-start links can be synced' : 'task is not linked to Redmine'}.`)
       continue
     }
     const delay = Number(link.lag ?? 0) / (unit === 'hour' ? hoursPerDay : 1)
-    if (!Number.isInteger(delay)) { skipped.push(`Successor ${target.text}: Redmine delay must be a whole number of days.`); continue }
+    if (!Number.isInteger(delay)) { blocked = true; skipped.push(`Successor ${target.text}: Redmine delay must be a whole number of days.`); continue }
     relations.push({ key: String(target.externalKey), delay })
   }
-  return { relations, skipped }
+  return { relations, skipped, blocked }
 }
 
 export function relationsEqual(a: RemoteRelation[], b: RemoteRelation[]): boolean {

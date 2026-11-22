@@ -115,6 +115,22 @@ describe('two-way successor relations', () => {
     expect(localRelations(tasks[0], tasks, [{ ...link, lag: 16 }], 8, 'hour').relations[0].delay).toBe(2)
     expect(applyRelations([], tasks[0], tasks, [{ key: '102', delay: 2 }], 8, 'hour')[0].lag).toBe(16)
   })
+  it.each([{ type: 's2s' as const }, { lag: 0.5 }])('never writes a previously synced relation after an unwritable edit: %o', async (edit) => {
+    const base = [{ id: 8, key: '102', delay: 2 }]
+    const edited = { ...link, ...edit }
+    for (const remote of [undefined, base, []]) {
+      const p = provider()
+      const push = vi.fn()
+      const result = await executeSync(plan(base, [edited], remote), {}, push, p)
+      expect(p.deleteRelation).not.toHaveBeenCalled()
+      expect(p.createRelation).not.toHaveBeenCalled()
+      expect(push).not.toHaveBeenCalled()
+      expect(result.links).toEqual([edited])
+      expect(taskBaseline(result.tasks[0])?.relations).toEqual(base)
+      expect(result.report.skipped).toHaveLength(1)
+      expect(hasLocalChanges(result.tasks[0], mapping, result.tasks, result.links)).toBe(true)
+    }
+  })
   it('preserves remote IDs on full Get and rejects removals without IDs', async () => {
     const rows = [{ id: 8, key: '102', delay: 2 }]
     const result = applyRemoteIssues([{ key: '101', fields: { subject: 'Task 1', successors: rows } }], [], mapping, { tasks, links: [], resources: [] }, 'redmine', defaultCalendarConfig, 'day', false)

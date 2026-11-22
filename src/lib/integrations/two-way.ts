@@ -129,6 +129,7 @@ export function planSync(input: {
       const equal = !!remote && relationsEqual(localLinks.relations, remoteLinks)
       let action: Change['action'] = equal ? 'equal' : localChanged && remoteChanged ? 'conflict' : localChanged && known ? 'push' : remoteChanged ? 'pull' : 'skip'
       if (input.autoPull && localChanged) action = remoteChanged && !equal ? 'conflict' : 'skip'
+      if (localLinks.blocked) action = 'skip'
       const conflictId = JSON.stringify([key, 'successors'])
       relations = { field: 'successors', remoteKey: mapping.fields.successors, local: localLinks.relations, remote: remote ? remoteLinks : base, action, conflictId }
       if (action === 'conflict') conflicts.push({ id: conflictId, issueKey: key, task: String(original.text ?? key), field: 'successors', fieldLabel: 'Successors', local: localLinks.relations, remote: remoteLinks })
