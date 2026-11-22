@@ -103,6 +103,7 @@ export function useGanttProject() {
 
   const [api, setApi] = useState<IApi | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const integrationSettingsRef = useRef(integrationSettings)
   const calendarConfigRef = useRef(calendarConfig)
   const durationUnitRef = useRef(durationUnit)
   const tasksRef = useRef(tasks)
@@ -118,6 +119,7 @@ export function useGanttProject() {
   const deletedTaskIdsRef = useRef<Set<string>>(new Set())
 
   useLayoutEffect(() => {
+    integrationSettingsRef.current = integrationSettings
     calendarConfigRef.current = calendarConfig
     durationUnitRef.current = durationUnit
     tasksRef.current = tasks
@@ -126,7 +128,7 @@ export function useGanttProject() {
     selectedTaskIdRef.current = selectedTaskId
     selectedTaskIdsRef.current = selectedTaskIds
     deletedTaskIdsRef.current.clear()
-  }, [api, calendarConfig, durationUnit, tasks, links, selectedTaskId, selectedTaskIds])
+  }, [api, calendarConfig, durationUnit, tasks, links, selectedTaskId, selectedTaskIds, integrationSettings])
 
   useLayoutEffect(() => {
     if (!api) return
@@ -1179,6 +1181,7 @@ export function useGanttProject() {
 
   const handleSaveIntegrationSettings = useCallback(
     (settings: IntegrationSettings) => {
+      integrationSettingsRef.current = settings
       setIntegrationSettings(settings)
       saveIntegrationSettings(settings)
       upsertRedmineMembers(settings.knownMembers)
@@ -1200,18 +1203,20 @@ export function useGanttProject() {
     []
   )
 
-  const showIntegrationError = useCallback((error: unknown) => {
+  const showIntegrationError = useCallback((error: unknown, retry?: (settings: IntegrationSettings) => Promise<void>) => {
     toast.error(error instanceof Error ? error.message : String(error), error instanceof RedmineCorsError ? {
       action: { label: 'Use proxy', onClick: () => {
-        const settings = { ...integrationSettings, useDevProxy: true }
+        const settings = { ...integrationSettingsRef.current, useDevProxy: true }
+        integrationSettingsRef.current = settings
         setIntegrationSettings(settings)
         saveIntegrationSettings(settings)
-        toast.info('Proxy enabled. Retry the Redmine operation.')
+        if (retry) void retry(settings)
+        else toast.info('Proxy enabled. Retry the Redmine operation.')
       } },
     } : undefined)
-  }, [integrationSettings])
+  }, [])
 
-  const performRedmineGet = useCallback(async (baseTasks: ITask[], baseLinks: ILink[], overrideSettings?: IntegrationSettings) => {
+  const performRedmineGet = useCallback(async function performGet(baseTasks: ITask[], baseLinks: ILink[], overrideSettings?: IntegrationSettings): Promise<void> {
     if (busyRef.current) return
     busyRef.current = true
     setIntegrationBusy('get')
@@ -1260,7 +1265,7 @@ export function useGanttProject() {
       saveIntegrationSettings(syncedSettings)
       toast.success(`Redmine get complete: ${result.inserted} inserted, ${result.updated} updated.`)
     } catch (err) {
-      showIntegrationError(err)
+      showIntegrationError(err, (settings) => performGet(baseTasks, baseLinks, settings))
     } finally {
       busyRef.current = false
       setIntegrationBusy(null)
