@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ITask } from '@svar-ui/react-gantt'
-import { hasLocalChanges, maxCursor, snapshot, syncEqual, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
+import { hasLocalChanges, mappingFingerprint, maxCursor, snapshot, syncEqual, syncFetchCursor, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
 import { executeSync, mergeSyncTasks, planSync, pushNewTasks } from '@/lib/integrations/two-way'
 import { defaultFieldMapping } from '@/lib/integrations/fields'
 import { defaultIntegrationSettings } from '@/lib/integrations/settings'
@@ -18,6 +18,17 @@ const response = (body: unknown) => new Response(JSON.stringify(body))
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('baseline and comparator', () => {
+  it('requires a matching mapping fingerprint and complete baselines to reuse a cursor', () => {
+    const settings = { ...defaultIntegrationSettings(), mapping, syncCursor: issue().updatedOn, syncMappingFingerprint: mappingFingerprint(mapping) }
+    expect(syncFetchCursor(settings, [based()])).toBe(settings.syncCursor)
+    expect(syncFetchCursor({ ...settings, syncMappingFingerprint: undefined }, [based()])).toBeUndefined()
+    expect(syncFetchCursor(settings, [])).toBeUndefined()
+    expect(syncFetchCursor(settings, [task()])).toBeUndefined()
+    const remapped = { ...mapping, fields: { ...mapping.fields, text: 'cf_2' } }
+    expect(syncFetchCursor({ ...settings, mapping: remapped }, [based()])).toBeUndefined()
+    expect(syncFetchCursor({ ...settings, mapping: { ...mapping, extraFields: ['cf_1', 'cf_2'] } }, [based()])).toBeUndefined()
+    expect(mappingFingerprint({ ...mapping, extraFields: ['cf_2', 'cf_1'] })).toBe(mappingFingerprint({ ...mapping, extraFields: ['cf_1', 'cf_2'] }))
+  })
   it.each([[null, ''], [undefined, null], [1.00000001, 1], [new Date(2026, 8, 1), '2026-09-01T00:00:00.000Z']])('normalizes %s and %s', (a, b) => {
     expect(syncEqual(a, b, a instanceof Date ? 'start' : '')).toBe(true)
   })
@@ -54,6 +65,23 @@ describe('baseline and comparator', () => {
 })
 
 describe('three-way merge', () => {
+  it('conflicts on a remapped field instead of trusting its old baseline, including older remote issues', async () => {
+    const remapped = { ...mapping, fields: { ...mapping.fields, text: 'cf_2' } }
+    const original = { ...based(), text: 'Local edit' }
+    const remote = { ...issue(), updatedOn: '2025-01-01T00:00:00Z', fields: { ...issue().fields, cf_2: 'Older remote value' } }
+    const input = { tasks: [original], issues: [remote], links: [], resources: [], mapping: remapped, descriptors: [], calendar: defaultCalendarConfig, durationUnit: 'day' as const }
+    const plan = planSync(input)
+    expect(plan.conflicts.map((c) => c.field)).toEqual(['text'])
+    const push = vi.fn()
+    await expect(executeSync(plan, {}, push)).rejects.toThrow('Choose a value')
+    expect(push).not.toHaveBeenCalled()
+    const auto = await executeSync(planSync({ ...input, autoPull: true }), {}, push)
+    expect(taskBaseline(auto.tasks[0])?.mapping?.text).toBe('subject')
+    expect(hasLocalChanges(auto.tasks[0], remapped)).toBe(true)
+    const resolved = await executeSync(plan, { [plan.conflicts[0].id]: 'remote' }, push)
+    expect(resolved.tasks[0].text).toBe('Older remote value')
+    expect(hasLocalChanges(resolved.tasks[0], remapped)).toBe(false)
+  })
   it('clears obsolete open flags after remote reparenting without mutating the source', async () => {
     const parentMapping = { ...mapping, fields: { ...mapping.fields, parent: 'parent_id' } }
     const parent = { id: 5, text: 'Former parent', open: true, type: 'summary' }

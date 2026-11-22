@@ -53,6 +53,7 @@ export type IntegrationFieldMapping = {
 
 export type IntegrationSettings = {
   syncCursor?: string
+  syncMappingFingerprint?: string
   autoPullMinutes?: number
   fieldOverrides: Record<string, { label?: string; valueType?: RemoteFieldValueType; multiple?: boolean; options?: string[] }>
   manualFields: RemoteFieldDescriptor[]

@@ -14,7 +14,7 @@ import { computeCriticalPath } from '@/lib/critical-path'
 import { createProvider } from '@/lib/integrations'
 import { effectiveFields, applyIntegrationMetadata, loadIntegrationSettings, saveIntegrationSettings } from '@/lib/integrations/settings'
 import { applyRemoteIssues, linkedTasks, unlinkedTasks } from '@/lib/integrations/sync'
-import { hasLocalChanges, maxCursor, syncFields, taskBaseline } from '@/lib/integrations/baseline'
+import { hasLocalChanges, mappingFingerprint, maxCursor, syncFetchCursor } from '@/lib/integrations/baseline'
 import { executeSync, mergeSyncTasks, planSync, pushNewTasks, type SyncChoice, type SyncPlan, type SyncReport } from '@/lib/integrations/two-way'
 import type { IntegrationSettings, PushContext, RemoteFieldDescriptor, RemoteIssue, RemoteProjectMetadata } from '@/lib/integrations/types'
 import { toast } from 'sonner'
@@ -1243,7 +1243,7 @@ export function useGanttProject() {
       setSelectedTaskId(null)
       setSelectedTaskIds([])
       setPendingDeleteIds(null)
-      const syncedSettings = { ...resolvedSettings, syncCursor: maxCursor(resolvedSettings.syncCursor, issues.map((issue) => issue.updatedOn)) }
+      const syncedSettings = { ...resolvedSettings, syncCursor: maxCursor(resolvedSettings.syncMappingFingerprint === mappingFingerprint(resolvedSettings.mapping) ? resolvedSettings.syncCursor : undefined, issues.map((issue) => issue.updatedOn)), syncMappingFingerprint: mappingFingerprint(resolvedSettings.mapping) }
       setIntegrationSettings(syncedSettings)
       saveIntegrationSettings(syncedSettings)
       toast.success(`Redmine get complete: ${result.inserted} inserted, ${result.updated} updated.`)
@@ -1372,7 +1372,8 @@ export function useGanttProject() {
       setLinks(result.links)
       setResourceList(result.resources)
       if (result.report.failed.length === 0 && (!session.plan.autoPull || session.plan.conflicts.length === 0)) {
-        const saved = { ...session.settings, syncCursor: maxCursor(session.settings.syncCursor, session.issues.map((issue) => issue.updatedOn)) }
+        const fingerprint = mappingFingerprint(session.settings.mapping)
+        const saved = { ...session.settings, syncCursor: maxCursor(session.settings.syncMappingFingerprint === fingerprint ? session.settings.syncCursor : undefined, session.issues.map((issue) => issue.updatedOn)), syncMappingFingerprint: fingerprint }
         setIntegrationSettings(saved)
         saveIntegrationSettings(saved)
       }
@@ -1397,11 +1398,7 @@ export function useGanttProject() {
       const settings = integrationSettings
       const provider = createProvider(settings)
       const linked = linkedTasks(tasks, 'redmine')
-      const legacy = linked.length === 0 || linked.some((task) => {
-        const baseline = taskBaseline(task)
-        return !baseline || syncFields(settings.mapping).some(({ field }) => !Object.hasOwn(baseline.base, field))
-      })
-      const fetched = await provider.fetchIssues({ updatedSince: retryKeys || legacy ? undefined : settings.syncCursor })
+      const fetched = await provider.fetchIssues({ updatedSince: retryKeys ? undefined : syncFetchCursor(settings, linked) })
       const issues = retryKeys ? fetched.filter((issue) => retryKeys.has(issue.key)) : fetched
       const plan = planSync({ tasks, links, resources: resourceList, issues, descriptors: effectiveFields(settings),
         mapping: settings.mapping, calendar: calendarConfig, durationUnit, autoPull, autoSchedule: isAutoSchedule })

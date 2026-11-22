@@ -6,7 +6,7 @@ export type TaskWithResources = ITask & {
   resources?: number[]
   externalSource?: string   // provider id, e.g. 'redmine'
   externalKey?: string      // remote issue id/key, e.g. '1234'
-  externalSync?: { updatedOn?: string; base: Record<string, unknown> }
+  externalSync?: { updatedOn?: string; base: Record<string, unknown>; mapping?: Record<string, string> }
 }
 
 export type GanttResource = {

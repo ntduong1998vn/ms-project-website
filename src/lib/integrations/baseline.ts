@@ -1,5 +1,5 @@
 import type { ITask } from '@svar-ui/react-gantt'
-import type { IntegrationFieldMapping } from '@/lib/integrations/types'
+import type { IntegrationFieldMapping, IntegrationSettings } from '@/lib/integrations/types'
 import type { TaskWithResources } from '@/types/gantt'
 import { parseLocalDate } from '@/lib/integrations/fields'
 
@@ -33,17 +33,31 @@ export function taskBaseline(task: ITask): TaskWithResources['externalSync'] {
   return task.externalSync as TaskWithResources['externalSync']
 }
 
+export function mappingFingerprint(mapping: IntegrationFieldMapping): string {
+  return JSON.stringify([Object.entries(mapping.fields).sort(([a], [b]) => a.localeCompare(b)), [...mapping.extraFields].sort()])
+}
+
+export function baselineHasField(task: ITask, field: string, remoteKey: string): boolean {
+  const baseline = taskBaseline(task)
+  return !!baseline && Object.hasOwn(baseline.base, field) && baseline.mapping?.[field] === remoteKey
+}
+
+export function syncFetchCursor(settings: IntegrationSettings, linked: ITask[]): string | undefined {
+  return settings.syncMappingFingerprint === mappingFingerprint(settings.mapping) && linked.length > 0 && linked.every((task) => syncFields(settings.mapping).every(({ field, remoteKey }) => baselineHasField(task, field, remoteKey)))
+    ? settings.syncCursor : undefined
+}
+
 export function snapshot(task: ITask, mapping: IntegrationFieldMapping): Record<string, unknown> {
   return Object.fromEntries(syncFields(mapping).map(({ field }) => [field, structuredClone(task[field] ?? null)]))
 }
 
 export function withBaseline(task: ITask, mapping: IntegrationFieldMapping, updatedOn?: string): ITask {
-  return { ...task, externalSync: { updatedOn, base: snapshot(task, mapping) } }
+  return { ...task, externalSync: { updatedOn, base: snapshot(task, mapping), mapping: Object.fromEntries(syncFields(mapping).map(({ field, remoteKey }) => [field, remoteKey])) } }
 }
 
 export function hasLocalChanges(task: ITask, mapping: IntegrationFieldMapping): boolean {
   const baseline = taskBaseline(task)
-  return !baseline || syncFields(mapping).some(({ field }) => !Object.hasOwn(baseline.base, field) || !syncEqual(task[field], baseline.base[field], field))
+  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(task[field], baseline.base[field], field))
 }
 
 export function maxCursor(current: string | undefined, values: Array<string | undefined>): string | undefined {

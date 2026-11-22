@@ -5,7 +5,7 @@ import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import { autoScheduleTasks } from '@/lib/scheduler'
 import { applyRemoteIssues, normalizeRemoteHierarchy } from '@/lib/integrations/sync'
 import { syncTaskFields } from '@/lib/integrations/fields'
-import { snapshot, syncEqual, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
+import { baselineHasField, syncEqual, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
 
 export type SyncConflict = { id: string; issueKey: string; task: string; field: string; fieldLabel: string; local: unknown; remote: unknown }
 export type SyncChoice = 'local' | 'remote'
@@ -50,7 +50,8 @@ export function planSync(input: {
   const seed = tasks.map((task) => {
     const baseline = taskBaseline(task)
     if (!baseline) return task
-    const copy = { ...task, ...structuredClone(baseline.base) }
+    const copy = { ...task }
+    for (const { field, remoteKey } of syncFields(mapping)) if (baselineHasField(task, field, remoteKey)) copy[field] = structuredClone(baseline.base[field])
     for (const field of ['start', 'end']) if (copy[field]) copy[field] = new Date(copy[field] as string)
     return copy
   })
@@ -69,9 +70,9 @@ export function planSync(input: {
     const changes = syncFields(mapping).map(({ field, remoteKey }): Change => {
       const local = original[field]
       const value = remoteTask?.[field]
-      const known = baseline && Object.hasOwn(baseline.base, field)
-      const localChanged = !known || !syncEqual(local, baseline.base[field], field)
-      const remoteChanged = remote && (!known || !syncEqual(value, baseline.base[field], field))
+      const known = baselineHasField(original, field, remoteKey)
+      const localChanged = !known || !syncEqual(local, baseline!.base[field], field)
+      const remoteChanged = remote && (!known || !syncEqual(value, baseline!.base[field], field))
       const equal = remote && syncEqual(local, value, field)
       let action: Change['action'] = equal ? 'equal' : localChanged && remoteChanged ? 'conflict' : localChanged && known ? 'push' : remoteChanged ? 'pull' : 'skip'
       if (input.autoPull && localChanged) action = remoteChanged && !equal ? 'conflict' : 'skip'
@@ -98,6 +99,7 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
       const key = String(original.externalKey)
       const next = { ...original }
       const base = { ...taskBaseline(original)?.base }
+      const baseMapping = { ...taskBaseline(original)?.mapping }
       const pushKeys = new Set<string>()
       let pulled = false
       let resolved = 0
@@ -112,10 +114,11 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
         if (action === 'pull') { next[change.field] = structuredClone(change.remote); pulled = true }
         if (action === 'push') pushKeys.add(change.remoteKey)
         base[change.field] = structuredClone(next[change.field] ?? null)
+        baseMapping[change.field] = change.remoteKey
       }
       try {
         if (pushKeys.size && !plan.autoPull) await push(key, next, pushKeys)
-        next.externalSync = { updatedOn: remote?.updatedOn ?? taskBaseline(original)?.updatedOn, base }
+        next.externalSync = { updatedOn: remote?.updatedOn ?? taskBaseline(original)?.updatedOn, base, mapping: baseMapping }
         completed.set(key, next)
         if (pulled) report.pulled++
         if (pushKeys.size) report.pushed++
@@ -125,7 +128,7 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
       }
     }
   }))
-  const mergedTasks = normalizeRemoteHierarchy([...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => ({ ...task, externalSync: { updatedOn: taskBaseline(task)?.updatedOn, base: snapshot(task, plan.mapping) } })))])
+  const mergedTasks = normalizeRemoteHierarchy([...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => withBaseline(task, plan.mapping, taskBaseline(task)?.updatedOn))])
   return { tasks: plan.autoSchedule ? autoScheduleTasks(mergedTasks, plan.links, plan.calendar, plan.durationUnit) : mergedTasks,
     links: plan.links, resources: plan.resources, report }
 }
