@@ -63,8 +63,18 @@ export async function proxyRedmine(request: Request, allowedOrigins = process.en
     if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.search || target.hash) throw new Error()
     if (allowed.length && !allowed.includes(target.origin)) return jsonError(403, 'Redmine target is not in REDMINE_ALLOWED_ORIGINS.')
     const url = new URL(request.url)
-    if (!url.pathname.startsWith('/api/redmine-proxy/')) throw new Error()
-    upstream = new URL(target.origin + target.pathname.replace(/\/+$/, '') + '/' + url.pathname.slice('/api/redmine-proxy/'.length) + url.search)
+    const prefix = '/api/redmine-proxy'
+    let path: string
+    if (url.pathname === prefix) {
+      const paths = url.searchParams.getAll('path')
+      if (paths.length !== 1) throw new Error()
+      path = decodeURIComponent(paths[0])
+      url.searchParams.delete('path')
+    } else if (url.pathname.startsWith(prefix + '/') && !url.searchParams.has('path')) {
+      path = decodeURIComponent(url.pathname.slice(prefix.length + 1))
+    } else throw new Error()
+    if (!/^[\w./-]+\.json$/.test(path) || path.split('/').some((segment) => !segment || segment === '.' || segment === '..')) return jsonError(400, 'Only relative Redmine .json API paths are allowed.')
+    upstream = new URL(target.origin + target.pathname.replace(/\/+$/, '') + '/' + path + url.search)
     if (upstream.origin !== target.origin) throw new Error()
     const pathname = decodeURIComponent(upstream.pathname)
     if (!pathname.endsWith('.json') || [...pathname].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === '\\')) return jsonError(400, 'Only Redmine .json API paths are allowed.')

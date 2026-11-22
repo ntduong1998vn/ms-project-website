@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Readable } from 'node:stream'
 import { EventEmitter } from 'node:events'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import handler, { proxyRedmine } from '../api/redmine-proxy/[...path]'
+import { readFileSync } from 'node:fs'
+import handler, { proxyRedmine } from '../api/redmine-proxy'
 
 const network = vi.hoisted(() => ({ lookup: vi.fn(), httpsRequest: vi.fn(), httpRequest: vi.fn() }))
 vi.mock('node:dns/promises', () => ({ lookup: network.lookup }))
@@ -66,10 +67,10 @@ describe('production Redmine proxy', () => {
     expect(result.status).toBe(502)
     expect(await result.text()).not.toContain('sensitive')
   })
-  it.each([false, true])('adapts Node/Vercel requests (parsed body: %s)', async (parsed) => {
+  it.each([false, true])('adapts rewritten Node/Vercel requests (parsed body: %s)', async (parsed) => {
     const body = '{"relation":{"issue_to_id":102}}'
     const req = Object.assign(Readable.from([Buffer.from(body)]), {
-      method: 'POST', url: '/api/redmine-proxy/issues/101/relations.json?x=1',
+      method: 'POST', url: '/api/redmine-proxy?path=issues%2F101%2Frelations.json&x=1',
       headers: { 'x-redmine-target': 'http://redmine.test', 'content-type': 'application/json', 'x-redmine-api-key': 'test-key' },
       ...(parsed ? { body: JSON.parse(body) } : {}),
     }) as IncomingMessage & { body?: unknown }
@@ -83,6 +84,67 @@ describe('production Redmine proxy', () => {
     const [url, init] = fetch.mock.calls[0] as unknown as [URL, RequestInit]
     expect(String(url)).toBe('http://redmine.test/issues/101/relations.json?x=1')
     expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(body)
+  })
+
+  it('configures a flat function rewrite and preserves query values and the target base path', async () => {
+    const config = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'))
+    expect(config.rewrites[0]).toEqual({ source: '/api/redmine-proxy/:path*', destination: '/api/redmine-proxy?path=:path*' })
+    const fetch = vi.fn(async () => new Response('{}'))
+    vi.stubGlobal('fetch', fetch)
+    const query = new URLSearchParams({ path: 'issues.json', offset: '100', status_id: '*', updated_on: '>=2026-01-01T12:30:00Z', sort: 'updated_on:asc,id:asc', query: 'a+b & c', tag: 'first' })
+    query.append('tag', 'second')
+    const result = await proxyRedmine(new Request('https://app.test/api/redmine-proxy?' + query, { headers: request().headers }), 'https://redmine.test')
+    expect(result.status).toBe(200)
+    const upstream = fetch.mock.calls[0][0] as URL
+    expect(upstream.origin + upstream.pathname).toBe('https://redmine.test/redmine/issues.json')
+    query.delete('path')
+    expect([...upstream.searchParams]).toEqual([...query])
+  })
+  it('keeps DNS validation and pinning on rewritten open-mode requests', async () => {
+    const rewritten = new Request('https://app.test/api/redmine-proxy?path=users/current.json&include=memberships', { headers: request('https://public.test/redmine').headers })
+    const result = await proxyRedmine(rewritten, '')
+    expect(result.status).toBe(401)
+    expect(String(network.httpsRequest.mock.calls[0][0])).toBe('https://public.test/redmine/users/current.json?include=memberships')
+    expect(network.lookup).toHaveBeenCalledExactlyOnceWith('public.test', { all: true, verbatim: true })
+    const callback = vi.fn()
+    network.httpsRequest.mock.calls[0][1].lookup('public.test', {}, callback)
+    expect(callback).toHaveBeenCalledWith(null, '93.184.216.34', 4)
+    network.lookup.mockResolvedValue([{ address: '169.254.169.254', family: 4 }])
+    expect((await proxyRedmine(rewritten, '')).status).toBe(403)
+    expect(network.httpsRequest).toHaveBeenCalledTimes(1)
+  })
+  it.each([
+    '', 'login', '../users/current.json', 'issues/../users/current.json', './issues.json',
+    '/users/current.json', '//evil.test/users/current.json', 'https://evil.test/issues.json',
+    'http://127.0.0.1/issues.json', 'issues\\current.json', 'issues\u0000.json', 'issues\n.json',
+    '%2e%2e/users/current.json', '%252e%252e/users/current.json', '%2f%2fevil.test/issues.json',
+    '%5c%5cevil.test/issues.json', '%', 'issues.json?x=other.json', 'issues.json#other.json',
+    'issues//current.json',
+  ])('rejects unsafe rewritten paths before any network access: %s', async (path) => {
+    const query = new URLSearchParams({ path })
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    for (const allowed of ['', 'https://redmine.test']) {
+      const result = await proxyRedmine(new Request('https://app.test/api/redmine-proxy?' + query, { headers: request().headers }), allowed)
+      expect(result.status).toBe(400)
+    }
+    expect(fetch).not.toHaveBeenCalled()
+    expect(network.lookup).not.toHaveBeenCalled()
+    expect(network.httpsRequest).not.toHaveBeenCalled()
+    expect(network.httpRequest).not.toHaveBeenCalled()
+  })
+  it.each([
+    '/api/redmine-proxy',
+    '/api/redmine-proxy?path=issues.json&path=users.json',
+    '/api/redmine-proxy?path=issues.json&path=..%2Fusers.json',
+    '/api/redmine-proxy/issues.json?path=users.json',
+    '/api/redmine-proxy-other?path=issues.json',
+    '/api/redmine-proxy/issues/%2f%2fevil.test/users.json',
+  ])('rejects missing or ambiguous proxy routes: %s', async (route) => {
+    const result = await proxyRedmine(new Request('https://app.test' + route, { headers: request().headers }), '')
+    expect(result.status).toBe(400)
+    expect(network.lookup).not.toHaveBeenCalled()
+    expect(network.httpsRequest).not.toHaveBeenCalled()
   })
 
   it.each(['https://public.test', 'http://public.test:8080', 'https://public.test:8443'])('allows public targets without configuration: %s', async (target) => {
