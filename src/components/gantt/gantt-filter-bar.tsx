@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DropdownMenu } from 'radix-ui'
 import type { IApi, IColumnConfig, ITask } from '@svar-ui/react-gantt'
 import { Check, ChevronDown, Filter, FilterX, Search, X } from 'lucide-react'
@@ -15,6 +15,7 @@ import {
   type QuickFilterValue,
   type TaskFilterPreset,
 } from '@/lib/gantt-filters'
+import { cn } from '@/lib/utils'
 
 type Props = {
   ganttApi: IApi | null
@@ -39,11 +40,38 @@ export function GanttFilterBar({ ganttApi, columns, tasks }: Props) {
   const [search, setSearch] = useState(quick?.search ?? '')
   const preset: TaskFilterPreset = quick?.preset ?? 'all'
 
+  const appliedRef = useRef(filterValues)
+
   useEffect(() => {
     if (!ganttApi) return
     const tag = Symbol('gantt-filter-bar')
-    ganttApi.on('filter-tasks', () => setFilterValues(readFilterValues(ganttApi)), { tag })
-    return () => ganttApi.detach(tag)
+    ganttApi.on(
+      'filter-tasks',
+      () => {
+        const next = readFilterValues(ganttApi)
+        appliedRef.current = next
+        setFilterValues(next)
+      },
+      { tag }
+    )
+    // Replacing the task data (edits, imports) makes SVAR drop its filters
+    // without a filter-tasks event, so re-apply what the user had set.
+    const filterStore = ganttApi.getReactiveState().filterValues as unknown as
+      | { subscribe: (fn: (values?: FilterValues) => void) => () => void }
+      | undefined
+    const unsubscribe = filterStore?.subscribe((values) => {
+      const kept = appliedRef.current
+      if (Object.keys(values ?? {}).length || !Object.values(kept).some((v) => v != null)) return
+      queueMicrotask(() => {
+        for (const [key, value] of Object.entries(kept)) {
+          if (value != null) void ganttApi.exec('filter-tasks', { key, value, open: true })
+        }
+      })
+    })
+    return () => {
+      ganttApi.detach(tag)
+      unsubscribe?.()
+    }
   }, [ganttApi])
 
   function applyQuick(next: QuickFilterValue) {
@@ -68,6 +96,7 @@ export function GanttFilterBar({ ganttApi, columns, tasks }: Props) {
   }
 
   function clearAll() {
+    appliedRef.current = {}
     setSearch('')
     void ganttApi?.exec('filter-tasks', {})
   }
@@ -84,7 +113,10 @@ export function GanttFilterBar({ ganttApi, columns, tasks }: Props) {
 
   const isFiltered = isQuickFilterActive(quick) || columnChips.length > 0
   const matcher = createTaskMatcher(filterValues, columns as Parameters<typeof createTaskMatcher>[1])
-  const matchCount = isFiltered ? tasks.filter(matcher).length : tasks.length
+  // Prop tasks lack computed fields such as `end`; match against the Gantt's own copies.
+  const matchCount = isFiltered
+    ? tasks.filter((task) => matcher((task.id != null && ganttApi?.getTask(task.id)) || task)).length
+    : tasks.length
 
   return (
     <div
@@ -109,11 +141,12 @@ export function GanttFilterBar({ ganttApi, columns, tasks }: Props) {
           <button
             type="button"
             aria-label="Built-in filter"
-            className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors cursor-pointer ${
+            className={cn(
+              'flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors cursor-pointer',
               preset !== 'all'
                 ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
                 : 'border-border bg-background text-foreground hover:bg-muted'
-            }`}
+            )}
           >
             <Filter className="h-3.5 w-3.5" aria-hidden="true" />
             <span>
