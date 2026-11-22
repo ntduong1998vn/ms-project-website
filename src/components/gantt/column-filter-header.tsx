@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Popover } from 'radix-ui'
 import type { IApi } from '@svar-ui/react-gantt'
 import { ArrowDownNarrowWide, ArrowUpNarrowWide, Check, ListFilter, Search, X } from 'lucide-react'
@@ -81,9 +81,19 @@ export function ColumnFilterHeader({
 
   const columnId = String(column.id ?? '')
   const state = api.getState()
-  const filterValue = state.filterValues?.[columnId] as ColumnFilterValue | undefined
+  const [filterValues, setFilterValues] = useState(state.filterValues)
+  const filterValue = filterValues?.[columnId] as ColumnFilterValue | undefined
   const currentSort = state.sortMarks?.[columnId]?.order
   const hasActiveFilter = isColumnFilterActive(filterValue)
+
+  // Filters also change from the filter bar and from SVAR resets, which do not re-render this header.
+  useEffect(() => {
+    if (!ganttApi) return
+    const store = ganttApi.getReactiveState().filterValues as unknown as
+      | { subscribe: (fn: (values?: Record<string, unknown>) => void) => () => void }
+      | undefined
+    return store?.subscribe((values) => setFilterValues(values))
+  }, [ganttApi])
 
   const allOptions = hasBlank ? [...options, BLANKS_OPTION] : options
 
