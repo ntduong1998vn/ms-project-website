@@ -46,10 +46,16 @@ export function invalidateIntegrationMetadata(settings: IntegrationSettings, pat
 }
 
 export function applyIntegrationMetadata(settings: IntegrationSettings, meta: RemoteProjectMetadata): IntegrationSettings {
-  const keys = new Set([...meta.fields, ...settings.manualFields].map((f) => f.key))
+  const knownFields = [...meta.fields]
+  if (!meta.customFieldsComplete) {
+    const referenced = new Set([...Object.values(settings.mapping.fields), ...settings.mapping.extraFields])
+    const discovered = new Set(meta.fields.map((f) => f.key))
+    knownFields.push(...settings.knownFields.filter((f) => f.key.startsWith('cf_') && referenced.has(f.key) && !discovered.has(f.key)))
+  }
+  const keys = new Set([...knownFields, ...settings.manualFields].map((f) => f.key))
   const keep = (key: string) => !meta.customFieldsComplete || !key.startsWith('cf_') || keys.has(key)
   return {
-    ...settings, knownFields: meta.fields, knownTrackers: meta.trackers, knownStatuses: meta.statuses,
+    ...settings, knownFields, knownTrackers: meta.trackers, knownStatuses: meta.statuses,
     knownPriorities: meta.priorities, knownVersions: meta.versions, knownMembers: meta.members,
     mapping: {
       fields: Object.fromEntries(Object.entries(settings.mapping.fields).map(([key, value]) => [key, value && keep(value) ? value : null])) as IntegrationSettings['mapping']['fields'],

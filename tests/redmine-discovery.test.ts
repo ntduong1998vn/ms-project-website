@@ -189,6 +189,37 @@ describe('schema and effective fields', () => {
 })
 
 describe('typed custom field roundtrip', () => {
+  it('retains referenced custom descriptors and numeric duration writes after failed discovery', async () => {
+    const s = settings()
+    s.knownFields = [
+      customFieldDescriptor({ id: 1, name: 'Duration', field_format: 'float' }),
+      customFieldDescriptor({ id: 2, name: 'Tags', field_format: 'list', multiple: true, possible_values: ['a', 'b'] }),
+      customFieldDescriptor({ id: 3, name: 'Unused', field_format: 'date' }),
+    ]
+    s.mapping.fields.duration = 'cf_1'
+    s.mapping.extraFields = ['cf_2']
+    vi.stubGlobal('fetch', vi.fn(async () => response({}, 500)))
+    const meta = await createRedmineProvider(s).fetchProjectMetadata()
+    expect(meta.customFieldsComplete).toBe(false)
+    const applied = applyIntegrationMetadata(s, meta)
+    expect(applied.mapping).toEqual(s.mapping)
+    expect(applied.knownFields.filter((f) => f.kind === 'custom')).toEqual(s.knownFields.slice(0, 2))
+    const task = { id: 1, text: 'Typed duration', duration: 3 }
+    const payload = (config: typeof s) => buildIssuePayload(task, {
+      mapping: config.mapping, descriptors: effectiveFields(config), keyByTaskId: new Map(),
+      resources: [], remoteMeta: meta, workingHoursPerDay: 8, durationUnit: 'day',
+    }, 'update')
+    expect(payload(s).custom_fields).toContainEqual({ id: 1, value: '3' })
+    expect(payload(applied).custom_fields).toEqual(payload(s).custom_fields)
+
+    const fresh = customFieldDescriptor({ id: 1, name: 'New duration', field_format: 'int' })
+    expect(applyIntegrationMetadata(s, { ...meta, fields: [fresh] }).knownFields.filter((f) => f.kind === 'custom')).toEqual([fresh, s.knownFields[1]])
+    const complete = applyIntegrationMetadata(s, { ...meta, customFieldsComplete: true })
+    expect(complete.knownFields.some((f) => f.key === 'cf_1')).toBe(false)
+    expect(complete.mapping.fields.duration).toBeNull()
+    expect(complete.mapping.extraFields).toEqual([])
+  })
+
   it('pulls numeric strings/date fields and pushes numeric duration without hours conversion or visibility', () => {
     const s = settings()
     s.manualFields = [customFieldDescriptor({ id: 1, name: 'Duration', field_format: 'float' }), customFieldDescriptor({ id: 2, name: 'Progress', field_format: 'int' }), customFieldDescriptor({ id: 3, name: 'Start', field_format: 'date' })]
