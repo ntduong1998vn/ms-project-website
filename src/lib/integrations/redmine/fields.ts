@@ -94,7 +94,7 @@ export function flattenRedmineIssue(issue: RedmineIssue): RemoteIssue {
   }
   fields.successors = successors
 
-  return { key: String(issue.id), fields }
+  return { key: String(issue.id), updatedOn: issue.updated_on, fields }
 }
 
 /**

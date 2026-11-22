@@ -31,6 +31,7 @@ export type RemoteFieldDescriptor = {
  */
 export type RemoteIssue = {
   key: string
+  updatedOn?: string
   fields: Record<string, unknown>
 }
 
@@ -51,6 +52,8 @@ export type IntegrationFieldMapping = {
 }
 
 export type IntegrationSettings = {
+  syncCursor?: string
+  autoPullMinutes?: number
   fieldOverrides: Record<string, { label?: string; valueType?: RemoteFieldValueType; multiple?: boolean; options?: string[] }>
   manualFields: RemoteFieldDescriptor[]
   provider: 'redmine'                            // discriminator for future 'jira'
@@ -93,8 +96,8 @@ export interface IssueTrackerProvider {
   listProjects(): Promise<Array<{ id: number; identifier: string; name: string }>>
   readonly id: string                            // 'redmine'
   testConnection(): Promise<string>            // returns display name (user.login); throws Error with user-facing message
-  fetchIssues(): Promise<RemoteIssue[]>          // all pages, relations included
+  fetchIssues(options?: { updatedSince?: string }): Promise<RemoteIssue[]>
   createIssue(task: ITask, ctx: PushContext): Promise<string>   // returns new issue key
-  updateIssue(key: string, task: ITask, ctx: PushContext): Promise<void>
+  updateIssue(key: string, task: ITask, ctx: PushContext, remoteKeys?: ReadonlySet<string>): Promise<void>
   fetchProjectMetadata(): Promise<RemoteProjectMetadata>
 }

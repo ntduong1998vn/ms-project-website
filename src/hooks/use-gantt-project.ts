@@ -14,7 +14,9 @@ import { computeCriticalPath } from '@/lib/critical-path'
 import { createProvider } from '@/lib/integrations'
 import { effectiveFields, applyIntegrationMetadata, loadIntegrationSettings, saveIntegrationSettings } from '@/lib/integrations/settings'
 import { applyRemoteIssues, linkedTasks, unlinkedTasks } from '@/lib/integrations/sync'
-import type { IntegrationSettings, PushContext, RemoteFieldDescriptor, RemoteProjectMetadata } from '@/lib/integrations/types'
+import { hasLocalChanges, maxCursor, syncFields, taskBaseline } from '@/lib/integrations/baseline'
+import { executeSync, mergeSyncTasks, planSync, pushNewTasks, type SyncChoice, type SyncPlan, type SyncReport } from '@/lib/integrations/two-way'
+import type { IntegrationSettings, PushContext, RemoteFieldDescriptor, RemoteIssue, RemoteProjectMetadata } from '@/lib/integrations/types'
 import { toast } from 'sonner'
 
 type TaskPlacementMode = 'before' | 'after' | 'child' | 'up' | 'down'
@@ -73,6 +75,8 @@ export function useGanttProject() {
   const [isRedmineGetDialogOpen, setIsRedmineGetDialogOpen] = useState(false)
   const [integrationBusy, setIntegrationBusy] = useState<'get' | 'push' | 'sync' | 'meta' | null>(null)
   const busyRef = useRef(false) // re-entrancy guard — state captured in useCallback is stale for fast double-clicks
+  const [pendingSync, setPendingSync] = useState<{ plan: SyncPlan; issues: RemoteIssue[]; settings: IntegrationSettings; ctx: PushContext } | null>(null)
+  const [syncReport, setSyncReport] = useState<SyncReport | null>(null)
   const [activeTab, setActiveTab] = useState<RibbonTab>('task')
   const [selectedTaskId, setSelectedTaskId] = useState<string | number | null>(null)
   const [selectedTaskIds, setSelectedTaskIds] = useState<(string | number)[]>([])
@@ -1239,6 +1243,9 @@ export function useGanttProject() {
       setSelectedTaskId(null)
       setSelectedTaskIds([])
       setPendingDeleteIds(null)
+      const syncedSettings = { ...resolvedSettings, syncCursor: maxCursor(resolvedSettings.syncCursor, issues.map((issue) => issue.updatedOn)) }
+      setIntegrationSettings(syncedSettings)
+      saveIntegrationSettings(syncedSettings)
       toast.success(`Redmine get complete: ${result.inserted} inserted, ${result.updated} updated.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -1310,7 +1317,7 @@ export function useGanttProject() {
     }
     busyRef.current = true
     setIntegrationBusy('push')
-    const pushed = new Map<string, string>()
+    const pushed = new Map<string, { key: string; externalSync: ITask['externalSync'] }>()
     try {
       const settings = integrationSettings
       const provider = createProvider(settings)
@@ -1333,11 +1340,9 @@ export function useGanttProject() {
       }
       // Sequential in array order: locally-created parents precede children, so
       // the live keyByTaskId map resolves same-batch parent_issue_id values.
-      for (const task of candidates) {
-        const key = await provider.createIssue(task, ctx)
-        ctx.keyByTaskId.set(String(task.id), key)
-        pushed.set(String(task.id), key)
-      }
+      await pushNewTasks(candidates, provider, ctx, (created) => {
+        pushed.set(String(created.id), { key: String(created.externalKey), externalSync: created.externalSync })
+      })
       toast.success(`Redmine push complete: ${pushed.size} issue(s) created.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -1349,7 +1354,7 @@ export function useGanttProject() {
         setTasks((prev) =>
           prev.map((task) =>
             pushed.has(String(task.id))
-              ? { ...task, externalSource: 'redmine', externalKey: pushed.get(String(task.id)) }
+              ? { ...task, externalSource: 'redmine', externalKey: pushed.get(String(task.id))!.key, externalSync: pushed.get(String(task.id))!.externalSync }
               : task
           )
         )
@@ -1359,57 +1364,83 @@ export function useGanttProject() {
     }
   }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks])
 
-  const handleRedmineSync = useCallback(async () => {
-    if (busyRef.current) return
-    const linked = linkedTasks(tasks, 'redmine')
-    if (linked.length === 0) {
-      toast.info('No linked tasks to sync.')
-      return
+  const finishSync = async (session: NonNullable<typeof pendingSync>, choices: Record<string, SyncChoice>) => {
+    try {
+      const provider = createProvider(session.settings)
+      const result = await executeSync(session.plan, choices, (key, task, keys) => provider.updateIssue(key, task, session.ctx, keys))
+      setTasks((current) => mergeSyncTasks(session.plan.tasks, current, result.tasks, session.settings.mapping))
+      setLinks(result.links)
+      setResourceList(result.resources)
+      if (result.report.failed.length === 0 && (!session.plan.autoPull || session.plan.conflicts.length === 0)) {
+        const saved = { ...session.settings, syncCursor: maxCursor(session.settings.syncCursor, session.issues.map((issue) => issue.updatedOn)) }
+        setIntegrationSettings(saved)
+        saveIntegrationSettings(saved)
+      }
+      if (session.plan.autoPull) {
+        if (session.plan.conflicts.length) toast.info(`${session.plan.conflicts.length} conflicts — run Sync`)
+      } else setSyncReport(result.report)
+      setPendingSync(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      busyRef.current = false
+      setIntegrationBusy(null)
     }
+  }
+
+  const runRedmineSync = async (autoPull = false, retryKeys?: Set<string>) => {
+    if (busyRef.current) return
+    if (!autoPull) setSyncReport(null)
     busyRef.current = true
     setIntegrationBusy('sync')
     try {
       const settings = integrationSettings
       const provider = createProvider(settings)
-      const ctx: PushContext = {
-        mapping: settings.mapping,
-        descriptors: effectiveFields(settings),
-        keyByTaskId: new Map(
-          linked.map((task) => [String(task.id), String(task.externalKey)])
-        ),
-        resources: resourceList,
-        remoteMeta: {
-          trackers: settings.knownTrackers,
-          statuses: settings.knownStatuses,
-          priorities: settings.knownPriorities,
-          versions: settings.knownVersions,
-          members: settings.knownMembers,
-        },
-        workingHoursPerDay: calendarConfig.workingHoursPerDay,
-        durationUnit,
+      const linked = linkedTasks(tasks, 'redmine')
+      const legacy = linked.length === 0 || linked.some((task) => {
+        const baseline = taskBaseline(task)
+        return !baseline || syncFields(settings.mapping).some(({ field }) => !Object.hasOwn(baseline.base, field))
+      })
+      const fetched = await provider.fetchIssues({ updatedSince: retryKeys || legacy ? undefined : settings.syncCursor })
+      const issues = retryKeys ? fetched.filter((issue) => retryKeys.has(issue.key)) : fetched
+      const plan = planSync({ tasks, links, resources: resourceList, issues, descriptors: effectiveFields(settings),
+        mapping: settings.mapping, calendar: calendarConfig, durationUnit, autoPull, autoSchedule: isAutoSchedule })
+      if (retryKeys) {
+        plan.entries = plan.entries.filter((entry) => retryKeys.has(String(entry.original.externalKey)))
+        plan.conflicts = plan.conflicts.filter((conflict) => retryKeys.has(conflict.issueKey))
+        plan.inserted = []
       }
-      const results = await Promise.allSettled(
-        linked.map((task) => provider.updateIssue(String(task.externalKey), task, ctx))
-      )
-      const updated = results.filter((result) => result.status === 'fulfilled').length
-      const failures = results.filter(
-        (result): result is PromiseRejectedResult => result.status === 'rejected'
-      )
-      const firstError = failures[0]?.reason
-      const syncMessage =
-        `Sync complete: ${updated} updated, ${failures.length} failed.` +
-        (firstError !== undefined
-          ? ` ${firstError instanceof Error ? firstError.message : String(firstError)}`
-          : '')
-      if (failures.length > 0) toast.info(syncMessage)
-      else toast.success(syncMessage)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    } finally {
+      const ctx: PushContext = {
+        mapping: settings.mapping, descriptors: effectiveFields(settings),
+        keyByTaskId: new Map(linkedTasks([...tasks, ...plan.inserted], 'redmine').map((task) => [String(task.id), String(task.externalKey)])),
+        resources: plan.resources, remoteMeta: { trackers: settings.knownTrackers, statuses: settings.knownStatuses,
+          priorities: settings.knownPriorities, versions: settings.knownVersions, members: settings.knownMembers },
+        workingHoursPerDay: calendarConfig.workingHoursPerDay, durationUnit,
+      }
+      const session = { plan, issues: retryKeys ? [] : issues, settings, ctx }
+      if (plan.conflicts.length && !autoPull) setPendingSync(session)
+      else await finishSync(session, {})
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks])
+  }
+
+  const handleRedmineSync = () => { void runRedmineSync() }
+  const handleApplySync = async (choices: Record<string, SyncChoice>) => { if (pendingSync) await finishSync(pendingSync, choices) }
+  const handleCancelSync = () => { setPendingSync(null); busyRef.current = false; setIntegrationBusy(null) }
+  const handleRetrySync = () => { if (syncReport) void runRedmineSync(false, new Set(syncReport.failed.map((failure) => failure.key))) }
+  const dirtySyncCount = linkedTasks(tasks, 'redmine').filter((task) => hasLocalChanges(task, integrationSettings.mapping)).length
+
+  const autoPullRef = useRef(runRedmineSync)
+  useEffect(() => { autoPullRef.current = runRedmineSync })
+  useEffect(() => {
+    const minutes = integrationSettings.autoPullMinutes ?? 0
+    if (minutes <= 0 || !Number.isFinite(minutes) || !integrationSettings.baseUrl || !integrationSettings.apiKey) return
+    const timer = window.setInterval(() => { void autoPullRef.current(true) }, Math.max(1, minutes) * 60_000)
+    return () => window.clearInterval(timer)
+  }, [integrationSettings.autoPullMinutes, integrationSettings.baseUrl, integrationSettings.apiKey])
 
   const handleRedmineFetchMetadata = useCallback(async () => {
     if (busyRef.current) return
@@ -1467,6 +1498,7 @@ export function useGanttProject() {
 
   return {
     state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, visibleRemoteColumns, setVisibleRemoteColumns, integrationSettings, setIntegrationSettings, isIntegrationDialogOpen, setIsIntegrationDialogOpen, isRedmineGetDialogOpen, setIsRedmineGetDialogOpen, integrationBusy, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, pendingDeleteIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
+    sync: { pendingSync, syncReport, setSyncReport, dirtySyncCount, handleApplySync, handleCancelSync, handleRetrySync },
     derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink, pendingDeleteTasks, displayTasks, displayLinks, visibleRemoteFieldKeys },
     actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleRequestDeleteSelectedTasks, handleConfirmDeleteTasks, handleCancelDeleteTasks, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn, handleAddRemoteColumn, handleSaveIntegrationSettings, handleSaveAndGetIntegration, handleTestIntegrationConnection, handleFetchIntegrationMetadata, handleRedmineGet, handleRedmineGetClear, handleRedmineGetUpsert, handleRedminePushNew, handleRedmineSync, handleRedmineFetchMetadata },
     gantt: { api, ganttResources, scalePresets },

@@ -9,6 +9,7 @@ import { AppLayout } from '@/components/layout/app-layout'
 import { ColumnChooserDialog } from '@/components/gantt/column-chooser-dialog'
 import { DeleteTasksDialog } from '@/components/gantt/delete-tasks-dialog'
 import { RedmineGetDialog } from '@/components/gantt/redmine-get-dialog'
+import { SyncConflictDialog, SyncResultsDialog } from '@/components/gantt/sync-dialogs'
 import { Toaster } from '@/components/ui/sonner'
 import { GanttRibbon } from '@/components/gantt/gantt-ribbon'
 import { ResourcesPanel } from '@/components/gantt/resources-panel'
@@ -20,7 +21,7 @@ import { effectiveFields } from '@/lib/integrations/settings'
 import { redmineStandardFields } from '@/lib/integrations/redmine/fields'
 
 export function GanttPage() {
-  const { state, derived, actions, gantt, fileInputRef } = useGanttProject()
+  const { state, derived, actions, gantt, sync, fileInputRef } = useGanttProject()
   const {
     calendarConfig,
     isAutoSchedule,
@@ -165,6 +166,7 @@ export function GanttPage() {
           onRedmineGet={actions.handleRedmineGet}
           onRedminePushNew={actions.handleRedminePushNew}
           onRedmineSync={actions.handleRedmineSync}
+          dirtySyncCount={sync.dirtySyncCount}
           onRedmineFetchMeta={actions.handleRedmineFetchMetadata}
           integrationBusy={integrationBusy}
           integrationConfigured={
@@ -174,6 +176,8 @@ export function GanttPage() {
       }
       overlays={
         <>
+          {sync.pendingSync && <SyncConflictDialog conflicts={sync.pendingSync.plan.conflicts} onApply={sync.handleApplySync} onCancel={sync.handleCancelSync} />}
+          {sync.syncReport && <SyncResultsDialog report={sync.syncReport} onClose={() => sync.setSyncReport(null)} onRetry={sync.handleRetrySync} />}
           <CalendarSettingsDialog
             open={isCalendarDialogOpen}
             onOpenChange={setIsCalendarDialogOpen}

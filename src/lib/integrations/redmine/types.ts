@@ -34,6 +34,7 @@ export type RedmineCustomFieldValue = {
 }
 
 export type RedmineIssue = {
+  updated_on?: string
   id: number
   subject: string
   description?: string

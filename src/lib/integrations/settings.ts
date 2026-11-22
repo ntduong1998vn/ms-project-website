@@ -41,7 +41,7 @@ export function invalidateIntegrationMetadata(settings: IntegrationSettings, pat
   if (!changed) return { ...settings, ...patch }
   return {
     ...settings, ...patch, knownFields: [], knownTrackers: [], knownStatuses: [], knownPriorities: [], knownVersions: [], knownMembers: [],
-    manualFields: [], fieldOverrides: {}, trackerId: null,
+    manualFields: [], fieldOverrides: {}, trackerId: null, syncCursor: undefined,
   }
 }
 

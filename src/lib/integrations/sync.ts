@@ -17,6 +17,7 @@ import {
   type ProjectCalendarConfig,
 } from '@/lib/scheduler'
 import { getNextNumericTaskId, hasParentCycle, sameTaskId } from '@/lib/task-helpers'
+import { withBaseline } from '@/lib/integrations/baseline'
 
 export type RemoteSyncResult =
   | { kind: 'success'; tasks: ITask[]; links: ILink[]; resources: GanttResource[]; inserted: number; updated: number }
@@ -406,6 +407,9 @@ export function applyRemoteIssues(
   }
 
   // 9-10. Optional auto-schedule, then return counts.
-  const tasks = isAutoSchedule ? autoScheduleTasks(mergedTasks, mergedLinks, calendarConfig, durationUnit) : mergedTasks
+  const scheduled = isAutoSchedule ? autoScheduleTasks(mergedTasks, mergedLinks, calendarConfig, durationUnit) : mergedTasks
+  const fetched = new Map(issues.map((issue) => [issue.key, issue]))
+  const tasks = scheduled.map((task) => task.externalSource === providerId && fetched.has(String(task.externalKey))
+    ? withBaseline(task, mapping, fetched.get(String(task.externalKey))?.updatedOn) : task)
   return { kind: 'success', tasks, links: mergedLinks, resources: nextResources, inserted, updated }
 }

@@ -82,6 +82,7 @@ export type GanttRibbonProps = {
   onRedmineGet: () => void
   onRedminePushNew: () => void
   onRedmineSync: () => void
+  dirtySyncCount?: number
   onRedmineFetchMeta: () => void
   integrationBusy: 'get' | 'push' | 'sync' | 'meta' | null
   integrationConfigured: boolean
@@ -130,6 +131,7 @@ export function GanttRibbon({
   onRedmineGet,
   onRedminePushNew,
   onRedmineSync,
+  dirtySyncCount = 0,
   onRedmineFetchMeta,
   integrationBusy,
   integrationConfigured,
@@ -326,7 +328,7 @@ export function GanttRibbon({
           <div className="flex items-center gap-1">
             <button type="button" onClick={onRedmineGet} disabled={integrationBusy !== null || !integrationConfigured} className="flex flex-col items-center justify-center gap-0.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Pull Redmine issues into the schedule' : 'Configure the Redmine connection first'}>{integrationBusy === 'get' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4 text-blue-500" />}<span className="text-[10px] leading-tight text-center">Get Tasks</span></button>
             <button type="button" onClick={onRedminePushNew} disabled={integrationBusy !== null || !integrationConfigured} className="flex flex-col items-center justify-center gap-0.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Create Redmine issues for unlinked tasks' : 'Configure the Redmine connection first'}>{integrationBusy === 'push' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 text-emerald-500" />}<span className="text-[10px] leading-tight text-center">Push New</span></button>
-            <button type="button" onClick={onRedmineSync} disabled={integrationBusy !== null || !integrationConfigured} className="flex flex-col items-center justify-center gap-0.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Push field updates of linked tasks to Redmine' : 'Configure the Redmine connection first'}>{integrationBusy === 'sync' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4 text-violet-500" />}<span className="text-[10px] leading-tight text-center">Sync to Redmine</span></button>
+            <button type="button" onClick={onRedmineSync} disabled={integrationBusy !== null || !integrationConfigured} className="flex flex-col items-center justify-center gap-0.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Merge local and Redmine changes' : 'Configure the Redmine connection first'}>{integrationBusy === 'sync' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4 text-violet-500" />}<span className="flex items-center gap-1 text-[10px] leading-tight text-center">Sync <span aria-label={`${dirtySyncCount} locally changed linked tasks`} className="rounded-full bg-primary px-1.5 py-0.5 text-primary-foreground">{dirtySyncCount}</span></span></button>
             <button type="button" onClick={onRedmineFetchMeta} disabled={integrationBusy !== null || !integrationConfigured} className="flex flex-col items-center justify-center gap-0.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted hover:border-border transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none" title={integrationConfigured ? 'Fetch trackers, statuses, members and custom fields' : 'Configure the Redmine connection first'}>{integrationBusy === 'meta' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderSync className="h-4 w-4 text-amber-500" />}<span className="text-[10px] leading-tight text-center">Get Project Info</span></button>
           </div>
         </>}
