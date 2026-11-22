@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { type IApi, type ILink, type IResource, type IScaleConfig, type ITask } from '@svar-ui/react-gantt'
-import { sampleLinks, sampleResources, sampleTasks } from '@/data/sample-gantt-data'
+import { loadPersistedState, persistProject, persistSettings } from '@/lib/storage/persistence'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 import type { CsvImportData, CsvTaskMapping } from '@/types/gantt-csv'
 import type { RibbonTab, ViewMode, ZoomMode } from '@/components/gantt/gantt-ribbon'
@@ -41,22 +41,51 @@ export function useGanttProject() {
   const [durationUnit, setDurationUnit] = useState<'day' | 'hour'>('day')
   const [zoom, setZoom] = useState<ZoomMode>('day')
 
-  // Initial tasks are pre-computed with autoScheduleTasks
-  const [tasks, setTasks] = useState<ITask[]>(() =>
-    autoScheduleTasks(
-      sampleTasks as unknown as ITask[],
-      sampleLinks as unknown as ILink[],
-      defaultCalendarConfig,
-      'day'
-    )
-  )
-  const [links, setLinks] = useState<ILink[]>(sampleLinks as unknown as ILink[])
-  const [resourceList, setResourceList] = useState<GanttResource[]>(sampleResources)
+  const [tasks, setTasks] = useState<ITask[]>([])
+  const [links, setLinks] = useState<ILink[]>([])
+  const [resourceList, setResourceList] = useState<GanttResource[]>([])
 
   const [api, setApi] = useState<IApi | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const calendarConfigRef = useRef(calendarConfig)
   const durationUnitRef = useRef(durationUnit)
+
+  const [canPersist, setCanPersist] = useState({ project: false, settings: false })
+
+  useEffect(() => {
+    let cancelled = false
+    loadPersistedState().then(({ project, settings, projectReadFailed, settingsReadFailed }) => {
+      if (cancelled) return
+      if (project) {
+        setTasks(project.tasks)
+        setLinks(project.links)
+        setResourceList(project.resourceList)
+      }
+      if (settings) {
+        setCalendarConfig(settings.calendarConfig)
+        setIsAutoSchedule(settings.isAutoSchedule)
+        setDurationUnit(settings.durationUnit)
+        setZoom(settings.zoom)
+        setViewMode(settings.viewMode)
+        setIsWorkColumnVisible(settings.isWorkColumnVisible)
+        setIsGanttVisible(settings.isGanttVisible)
+      }
+      setCanPersist({ project: !projectReadFailed, settings: !settingsReadFailed })
+    }).catch((error) => {
+      console.warn('Loading persisted state failed', error)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!canPersist.project) return
+    persistProject({ tasks, links, resourceList })
+  }, [canPersist.project, tasks, links, resourceList])
+
+  useEffect(() => {
+    if (!canPersist.settings) return
+    persistSettings({ calendarConfig, isAutoSchedule, durationUnit, zoom, viewMode, isWorkColumnVisible, isGanttVisible })
+  }, [canPersist.settings, calendarConfig, isAutoSchedule, durationUnit, zoom, viewMode, isWorkColumnVisible, isGanttVisible])
 
   useLayoutEffect(() => {
     calendarConfigRef.current = calendarConfig
@@ -915,7 +944,7 @@ export function useGanttProject() {
     setTasks(scheduled)
     setLinks(initialLinks)
     setSelectedTaskId(null)
-    setResourceList(sampleResources)
+    setResourceList([])
   }, [calendarConfig, durationUnit, isAutoSchedule])
 
   const handleDurationChange = useCallback(
