@@ -1208,12 +1208,12 @@ export function useGanttProject() {
       if (settings.knownFields.length === 0) {
         meta = await provider.fetchProjectMetadata().catch(() => null)
       }
-      let mergedResources = resourceList
+      let mergedResources = mergeRedmineMembers(resourceList, settings.knownMembers)
       if (meta) {
         const merged = applyIntegrationMetadata(settings, meta)
         setIntegrationSettings(merged)
         saveIntegrationSettings(merged)
-        mergedResources = mergeRedmineMembers(resourceList, meta.members)
+        mergedResources = mergeRedmineMembers(mergedResources, meta.members)
       }
       const resolvedSettings = meta ? applyIntegrationMetadata(settings, meta) : settings
       const descriptors = effectiveFields(resolvedSettings)
