@@ -92,6 +92,30 @@ describe('baseline and comparator', () => {
 })
 
 describe('three-way merge', () => {
+  it.each([false, true])('keeps a pulled finish with unmapped Duration and baselines the final schedule (constraint: %s)', async (constraint) => {
+    const datesMapping = { ...mapping, fields: { ...mapping.fields, start: 'start_date', end: 'due_date' } }
+    const original = withBaseline({ ...task(), start: new Date(2026, 8, 7), end: new Date(2026, 8, 8), duration: 1 }, datesMapping)
+    const predecessor = { id: 2, text: 'Predecessor', start: new Date(2026, 8, 10), end: new Date(2026, 8, 11), duration: 1 }
+    const tasks = constraint ? [original, predecessor] : [original]
+    const links = constraint ? [{ id: 1, source: 2, target: 1, type: 'e2s' }] : []
+    const issues = [{ ...issue(), fields: { ...issue().fields, start_date: '2026-09-07', due_date: '2026-09-10' } }]
+    const input = { tasks, links, issues, resources: [], descriptors: [], mapping: datesMapping, calendar: defaultCalendarConfig, durationUnit: 'day' as const, autoSchedule: true }
+    const plan = planSync(input)
+    const push = vi.fn()
+    const result = await executeSync(plan, {}, push)
+    const merged = mergeSyncTasks(tasks, tasks, result.tasks, datesMapping, { ...plan, acceptedFields: result.acceptedFields })
+    expect(merged[0].duration).toBe(4)
+    expect(merged[0].start).toEqual(new Date(2026, 8, constraint ? 11 : 7))
+    expect(merged[0].end).toEqual(new Date(2026, 8, constraint ? 17 : 11))
+    expect(taskBaseline(merged[0])?.base.end).toEqual(merged[0].end)
+    expect(hasLocalChanges(merged[0], datesMapping, merged)).toBe(false)
+    const again = await executeSync(planSync({ ...input, tasks: merged }), {}, push)
+    expect(again.tasks[0].end).toEqual(merged[0].end)
+    expect(again.report).toMatchObject({ pushed: 0, pulled: 0, failed: [] })
+    expect(push).not.toHaveBeenCalled()
+    const concurrent = mergeSyncTasks(tasks, [{ ...tasks[0], text: 'Edited during sync' }, ...tasks.slice(1)], result.tasks, datesMapping, { ...plan, acceptedFields: result.acceptedFields })
+    expect(hasLocalChanges(concurrent[0], datesMapping, concurrent)).toBe(true)
+  })
   it('conflicts on a remapped field instead of trusting its old baseline, including older remote issues', async () => {
     const remapped = { ...mapping, fields: { ...mapping.fields, text: 'cf_2' } }
     const original = { ...based(), text: 'Local edit' }

@@ -2,7 +2,7 @@ import type { ILink, ITask } from '@svar-ui/react-gantt'
 import type { GanttResource } from '@/types/gantt'
 import type { IntegrationFieldMapping, IssueTrackerProvider, PushContext, RemoteFieldDescriptor, RemoteIssue } from '@/lib/integrations/types'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
-import { autoScheduleTasks } from '@/lib/scheduler'
+import { autoScheduleTasks, calculateTaskDuration } from '@/lib/scheduler'
 import { applyRemoteIssues, normalizeRemoteHierarchy } from '@/lib/integrations/sync'
 import { syncTaskFields } from '@/lib/integrations/fields'
 import { baselineFieldKey, baselineHasField, ensureSyncIdentities, parentIdFromIdentity, syncEqual, syncFields, syncValue, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
@@ -17,6 +17,23 @@ export type SyncPlan = {
   calendar: ProjectCalendarConfig; durationUnit: 'day' | 'hour'; autoSchedule: boolean
 }
 export type SyncReport = { pulled: number; pushed: number; inserted: number; conflictsResolved: number; failed: Array<{ key: string; task: string; error: string }> }
+type SyncScheduling = Pick<SyncPlan, 'calendar' | 'durationUnit' | 'autoSchedule' | 'links'> & { acceptedFields?: Map<string, Set<string>> }
+
+function scheduleMergedTasks(tasks: ITask[], scheduling: SyncScheduling): ITask[] {
+  const before = new Map(tasks.map((task) => [String(task.id), task]))
+  const scheduled = scheduling.autoSchedule ? autoScheduleTasks(tasks, scheduling.links, scheduling.calendar, scheduling.durationUnit) : tasks
+  return scheduled.map((task) => {
+    const baseline = taskBaseline(task)
+    const accepted = scheduling.acceptedFields?.get(String(task.externalKey))
+    if (!baseline || !accepted?.size) return task
+    const base = { ...baseline.base }
+    for (const field of accepted) {
+      const original = before.get(String(task.id))!
+      if (syncEqual(syncValue(original, field, tasks), baseline.base[field], field)) base[field] = structuredClone(syncValue(task, field, scheduled) ?? null)
+    }
+    return { ...task, externalSync: { ...baseline, base } }
+  })
+}
 
 export async function pushNewTasks(tasks: ITask[], provider: Pick<IssueTrackerProvider, 'createIssue'>, ctx: PushContext, onCreated: (task: ITask) => void) {
   for (const task of tasks) {
@@ -27,7 +44,7 @@ export async function pushNewTasks(tasks: ITask[], provider: Pick<IssueTrackerPr
   }
 }
 
-export function mergeSyncTasks(before: ITask[], current: ITask[], incoming: ITask[], mapping: IntegrationFieldMapping, scheduling?: Pick<SyncPlan, 'calendar' | 'durationUnit' | 'autoSchedule' | 'links'>): ITask[] {
+export function mergeSyncTasks(before: ITask[], current: ITask[], incoming: ITask[], mapping: IntegrationFieldMapping, scheduling?: SyncScheduling): ITask[] {
   const originals = new Map(before.map((task) => [String(task.id), task]))
   const results = new Map(incoming.map((task) => [String(task.id), task]))
   const ids = new Set(current.map((task) => String(task.id)))
@@ -37,9 +54,10 @@ export function mergeSyncTasks(before: ITask[], current: ITask[], incoming: ITas
     if (!original || !result) return task
     const merged: ITask = { ...task, externalSync: result.externalSync, syncIdentity: result.syncIdentity ?? task.syncIdentity }
     for (const { field } of syncFields(mapping)) if (syncEqual(task[field], original[field], field)) merged[field] = result[field]
+    if (syncEqual(task.duration, original.duration) && (!syncEqual(result.start, original.start, 'start') || !syncEqual(result.end, original.end, 'end'))) merged.duration = result.duration
     return merged
   }), ...incoming.filter((task) => !originals.has(String(task.id)) && !ids.has(String(task.id)))])
-  return scheduling?.autoSchedule ? autoScheduleTasks(mergedTasks, scheduling.links, scheduling.calendar, scheduling.durationUnit) : mergedTasks
+  return scheduling ? scheduleMergedTasks(mergedTasks, scheduling) : mergedTasks
 }
 
 export function planSync(input: {
@@ -96,6 +114,7 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
   if (!plan.autoPull && plan.conflicts.some((c) => !choices[c.id])) throw new Error('Choose a value for every conflict.')
   const report: SyncReport = { pulled: 0, pushed: 0, inserted: plan.inserted.length, conflictsResolved: 0, failed: [] }
   const completed = new Map<string, ITask>()
+  const acceptedFields = new Map<string, Set<string>>()
   let index = 0
   await Promise.all(Array.from({ length: Math.min(4, plan.entries.length) }, async () => {
     while (index < plan.entries.length) {
@@ -106,6 +125,8 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
       const baseMapping = { ...taskBaseline(original)?.mapping }
       const pushKeys = new Set<string>()
       let pulled = false
+      let pulledDate = false
+      const accepted = new Set<string>()
       let resolved = 0
       for (const change of changes) {
         let action = change.action
@@ -115,15 +136,25 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
           resolved++
         }
         if (action === 'skip') continue
-        if (action === 'pull') { next[change.field] = structuredClone(change.remote); pulled = true }
+        if (action === 'pull') {
+          next[change.field] = structuredClone(change.remote)
+          pulled = true
+          if (change.field === 'start' || change.field === 'end') pulledDate = true
+        }
         if (action === 'push') pushKeys.add(change.remoteKey)
         base[change.field] = structuredClone(syncValue(next, change.field, [...plan.tasks, ...plan.inserted]) ?? null)
         baseMapping[change.field] = baselineFieldKey(change.field, change.remoteKey)
+        accepted.add(change.field)
+      }
+      if (pulledDate && plan.mapping.fields.end && next.start instanceof Date && next.end instanceof Date) {
+        next.duration = next.type === 'milestone' ? 0 : Math.max(1, calculateTaskDuration(next.start, next.end, plan.calendar, plan.durationUnit))
+        if (accepted.has('duration')) base.duration = next.duration
       }
       try {
         if (pushKeys.size && !plan.autoPull) await push(key, next, pushKeys)
         next.externalSync = { updatedOn: remote?.updatedOn ?? taskBaseline(original)?.updatedOn, base, mapping: baseMapping }
         completed.set(key, next)
+        acceptedFields.set(key, accepted)
         if (pulled) report.pulled++
         if (pushKeys.size) report.pushed++
         report.conflictsResolved += resolved
@@ -133,6 +164,6 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
     }
   }))
   const mergedTasks = normalizeRemoteHierarchy([...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => withBaseline(task, plan.mapping, taskBaseline(task)?.updatedOn, [...plan.tasks, ...plan.inserted]))])
-  return { tasks: plan.autoSchedule ? autoScheduleTasks(mergedTasks, plan.links, plan.calendar, plan.durationUnit) : mergedTasks,
-    links: plan.links, resources: plan.resources, report }
+  return { tasks: scheduleMergedTasks(mergedTasks, { ...plan, acceptedFields }),
+    links: plan.links, resources: plan.resources, report, acceptedFields }
 }
