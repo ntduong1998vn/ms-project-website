@@ -35,7 +35,6 @@ function pushCtx(): PushContext {
     keyByTaskId: new Map(),
     resources: [],
     remoteMeta: { trackers: [], statuses: [], priorities: [], versions: [], members: [] },
-    visibleRemoteColumns: [],
     workingHoursPerDay: 8,
     durationUnit: 'day',
   }

@@ -19,13 +19,12 @@ import type {
   RedmineIssueResponse,
   RedmineIssuesResponse,
   RedmineIssueStatusesResponse,
-  RedmineMembershipsResponse,
-  RedmineNamedEntity,
   RedmineProjectResponse,
-  RedmineTracker,
   RedmineUserResponse,
   RedmineVersionsResponse,
 } from '@/lib/integrations/redmine/types'
+
+import { customFieldDescriptor } from './schema'
 
 const PAGE_LIMIT = 100
 
@@ -106,78 +105,74 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     })
   }
 
-  /** Non-admin users can't hit /custom_fields.json — fall back to harvesting
-   *  descriptors from the custom_fields blocks on a sample issues page. */
-  async function harvestCustomFieldDescriptors(): Promise<RemoteFieldDescriptor[]> {
-    try {
-      const json = await request<RedmineIssuesResponse>(issuesPath(0))
-      const byId = new Map<number, RemoteFieldDescriptor>()
-      for (const issue of json?.issues ?? []) {
-        for (const cf of issue.custom_fields ?? []) {
-          const existing = byId.get(cf.id)
-          if (!existing) {
-            byId.set(cf.id, {
-              key: `cf_${cf.id}`,
-              label: `${cf.name} (custom)`,
-              kind: 'custom',
-              valueType: 'string',
-              multiple: Array.isArray(cf.value),
-            })
-          } else if (Array.isArray(cf.value)) {
-            existing.multiple = true
-          }
-        }
-      }
-      return [...byId.values()]
-    } catch {
-      return []
+  async function paginated<T>(path: string, key: string): Promise<T[]> {
+    const rows: T[] = []
+    for (;;) {
+      const page = await request<Record<string, unknown>>(path + (path.includes('?') ? '&' : '?') + `limit=${PAGE_LIMIT}&offset=${rows.length}`)
+      const values = (page?.[key] ?? []) as T[]
+      rows.push(...values)
+      if (!values.length || rows.length >= Number(page?.total_count ?? rows.length)) return rows
     }
   }
 
+  async function listProjects() {
+    return paginated<{ id: number; identifier: string; name: string }>('/projects.json', 'projects')
+  }
+
+  async function harvestCustomFieldDescriptors(warnings: string[]): Promise<RemoteFieldDescriptor[]> {
+    const byId = new Map<number, { field: RemoteFieldDescriptor; values: Set<string>; numeric: boolean; date: boolean; observed: boolean }>()
+    let offset = 0
+    for (;;) {
+      const json = await request<RedmineIssuesResponse>(issuesPath(offset))
+      const page = (json?.issues ?? []).slice(0, 2000 - offset)
+      for (const issue of page) {
+        for (const cf of issue.custom_fields ?? []) {
+          let entry = byId.get(cf.id)
+          if (!entry) {
+            entry = { field: { key: `cf_${cf.id}`, label: `${cf.name} (custom)`, kind: 'custom', valueType: 'string', multiple: false }, values: new Set(), numeric: true, date: true, observed: false }
+            byId.set(cf.id, entry)
+          }
+          entry.field.multiple ||= cf.multiple === true || Array.isArray(cf.value)
+          for (const raw of Array.isArray(cf.value) ? cf.value : [cf.value]) {
+            const value = String(raw ?? '').trim()
+            if (!value) continue
+            entry.observed = true
+            entry.numeric &&= Number.isFinite(Number(value))
+            entry.date &&= /^\d{4}-\d{2}-\d{2}$/.test(value)
+            if (entry.values.size <= 30) entry.values.add(value)
+          }
+        }
+      }
+      offset += page.length
+      if (offset >= 2000 && offset < json.total_count) warnings.push('Custom field inference limited to 2000 issues.')
+      if (!page.length || offset >= (json?.total_count ?? offset) || offset >= 2000) break
+    }
+    return [...byId.values()].map(({ field, values, numeric, date, observed }) => ({
+      ...field,
+      valueType: observed && numeric ? 'number' : observed && date ? 'date' : 'string',
+      options: observed && !numeric && !date && values.size <= 30 ? [...values].map((v) => ({ id: v, label: v })) : undefined,
+    }))
+  }
+
   async function fetchProjectMetadata(): Promise<RemoteProjectMetadata> {
+    const warnings: string[] = []
+    async function optional<T>(label: string, work: () => Promise<T>, fallback: T): Promise<T> {
+      try { return await work() } catch (err) {
+        warnings.push(`${label}: ${err instanceof Error ? err.message : String(err)}`)
+        return fallback
+      }
+    }
     const projectId = settings.projectIdentifier
-    const [trackers, members, statuses, priorities, versions, customFields] = await Promise.all([
-      projectId
-        ? request<RedmineProjectResponse>(
-            `/projects/${encodeURIComponent(projectId)}.json?include=trackers`
-          )
-            .then((j) => j?.project?.trackers ?? [])
-            .catch(() => [] as RedmineTracker[])
-        : Promise.resolve([] as RedmineTracker[]),
-      projectId
-        ? request<RedmineMembershipsResponse>(
-            // Redmine's max page size; projects with >100 members truncate (no pagination loop in v1)
-            `/projects/${encodeURIComponent(projectId)}/memberships.json?limit=${PAGE_LIMIT}`
-          )
-            .then((j) => {
-              // Memberships include groups — keep only real users
-              const users: Array<{ id: number; name: string }> = []
-              for (const m of j?.memberships ?? []) {
-                if (m.user != null) users.push({ id: m.user.id, name: m.user.name })
-              }
-              return users
-            })
-            .catch(() => [] as Array<{ id: number; name: string }>)
-        : Promise.resolve([] as Array<{ id: number; name: string }>),
-      request<RedmineIssueStatusesResponse>('/issue_statuses.json')
-        .then((j) => j?.issue_statuses ?? [])
-        .catch(() => [] as RedmineNamedEntity[]),
-      request<RedmineIssuePrioritiesResponse>('/enumerations/issue_priorities.json')
-        .then((j) => j?.issue_priorities ?? [])
-        .catch(() => [] as RedmineNamedEntity[]),
-      projectId
-        ? request<RedmineVersionsResponse>(
-            `/projects/${encodeURIComponent(projectId)}/versions.json`
-          )
-            .then((j) => j?.versions ?? [])
-            .catch(() => [] as RedmineNamedEntity[])
-        : Promise.resolve([] as RedmineNamedEntity[]),
-      // null distinguishes "request failed" from "no custom fields" — only the
-      // former triggers the issue-page harvest below
-      request<RedmineCustomFieldsResponse>('/custom_fields.json')
-        .then((j) => j.custom_fields ?? [])
-        .catch(() => null as RedmineCustomField[] | null),
+    const [project, memberships, statuses, priorities, versions, customFields] = await Promise.all([
+      projectId ? optional<RedmineProjectResponse['project'] | null>('Project', () => request<RedmineProjectResponse>(`/projects/${encodeURIComponent(projectId)}.json?include=trackers,issue_custom_fields`).then((j) => j.project), null) : null,
+      projectId ? optional('Memberships', () => paginated<import('./types').RedmineMembership>(`/projects/${encodeURIComponent(projectId)}/memberships.json`, 'memberships'), []) : [],
+      optional('Statuses', () => request<RedmineIssueStatusesResponse>('/issue_statuses.json').then((j) => j?.issue_statuses ?? []), []),
+      optional('Priorities', () => request<RedmineIssuePrioritiesResponse>('/enumerations/issue_priorities.json').then((j) => j?.issue_priorities ?? []), []),
+      projectId ? optional('Versions', () => request<RedmineVersionsResponse>(`/projects/${encodeURIComponent(projectId)}/versions.json`).then((j) => j?.versions ?? []), []) : [],
+      optional<RedmineCustomField[] | null>('Custom field schema', () => request<RedmineCustomFieldsResponse>('/custom_fields.json').then((j) => j.custom_fields ?? []), null),
     ])
+    const trackers = project?.trackers ?? []
+    const members = memberships.flatMap((m) => m.user ? [{ id: m.user.id, name: m.user.name }] : [])
 
     // flattenRedmineIssue stores the NAME for tracker/status/priority and
     // assigned_to/author, so option ids are names there; user-format custom
@@ -196,35 +191,22 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
       author: memberNameOptions,
     }
 
-    const cfDescriptors =
-      customFields !== null
-        ? customFields
-            // /custom_fields.json returns every customized_type; keep issue fields
-            // (missing customized_type = issue on older Redmine)
-            .filter((cf) => cf.customized_type == null || cf.customized_type === 'issue')
-            .map((cf): RemoteFieldDescriptor => {
-              const options =
-                cf.field_format === 'user'
-                  ? memberIdOptions
-                  : cf.field_format === 'version'
-                    ? versions.map((v) => ({ id: String(v.id), label: v.name }))
-                    : cf.possible_values?.map((pv) => ({
-                        id: pv.value,
-                        label: pv.label ?? pv.value,
-                      }))
-              return {
-                key: `cf_${cf.id}`,
-                label: `${cf.name} (custom)`,
-                description: cf.description,
-                kind: 'custom',
-                valueType: 'string',
-                multiple: cf.multiple === true || cf.multiple === '1',
-                options,
-              }
-            })
-        : await harvestCustomFieldDescriptors()
+    let cfDescriptors: RemoteFieldDescriptor[]
+    if (customFields !== null) {
+      cfDescriptors = customFields.filter((cf) => !cf.customized_type || cf.customized_type === 'issue').map((cf) => ({
+        ...customFieldDescriptor(cf),
+        options: cf.field_format === 'user' ? memberIdOptions : cf.field_format === 'version' ? versions.map((v) => ({ id: String(v.id), label: v.name })) : customFieldDescriptor(cf).options,
+      }))
+    } else {
+      warnings.push('Custom field schema needs admin — inferred from issues. Observed options may be incomplete.')
+      const harvested = await optional('Issue field inference', () => harvestCustomFieldDescriptors(warnings), [])
+      const fields = new Map((project?.issue_custom_fields ?? []).map((cf) => [`cf_${cf.id}`, { key: `cf_${cf.id}`, label: `${cf.name} (custom)`, kind: 'custom', valueType: 'string' } as RemoteFieldDescriptor]))
+      for (const field of harvested) fields.set(field.key, field)
+      cfDescriptors = [...fields.values()]
+    }
 
     return {
+      warnings,
       trackers: trackers.map((t) => ({ id: t.id, name: t.name })),
       members,
       statuses: statuses.map((s) => ({ id: s.id, name: s.name })),
@@ -242,6 +224,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
 
   return {
     id: 'redmine',
+    listProjects,
     testConnection,
     fetchIssues,
     createIssue,

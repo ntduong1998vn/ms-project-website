@@ -35,6 +35,7 @@ export type RemoteIssue = {
 }
 
 export type RemoteProjectMetadata = {
+  warnings: string[]
   trackers: Array<{ id: number; name: string }>
   members: Array<{ id: number; name: string }>
   statuses: Array<{ id: number; name: string }>
@@ -49,6 +50,8 @@ export type IntegrationFieldMapping = {
 }
 
 export type IntegrationSettings = {
+  fieldOverrides: Record<string, { label?: string; valueType?: RemoteFieldValueType; multiple?: boolean; options?: string[] }>
+  manualFields: RemoteFieldDescriptor[]
   provider: 'redmine'                            // discriminator for future 'jira'
   baseUrl: string                                // e.g. 'https://redmine.example.com'
   apiKey: string
@@ -71,9 +74,6 @@ export type PushContext = {
   descriptors: RemoteFieldDescriptor[]         // for cf `multiple` flags on push
   keyByTaskId: Map<string, string>            // taskId -> remote issue key; LIVE map — seeded from linked tasks, updated after each createIssue so same-batch children resolve new parents
   resources: GanttResource[]                  // for assigned_to externalKey resolution
-  // Remote field keys whose column is currently shown in the gantt grid —
-  // extraFields write-back is limited to these.
-  visibleRemoteColumns: string[]
   // Name -> id lookup lists for displayed remote columns (extraFields): the
   // task stores names for tracker/status/priority/fixed_version/assigned_to,
   // but the Redmine write API wants ids.
@@ -89,6 +89,7 @@ export type PushContext = {
 }
 
 export interface IssueTrackerProvider {
+  listProjects(): Promise<Array<{ id: number; identifier: string; name: string }>>
   readonly id: string                            // 'redmine'
   testConnection(): Promise<string>            // returns display name (user.login); throws Error with user-facing message
   fetchIssues(): Promise<RemoteIssue[]>          // all pages, relations included

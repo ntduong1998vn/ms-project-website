@@ -27,7 +27,6 @@ function ctx(overrides: {
   keyByTaskId?: Map<string, string>
   resources?: GanttResource[]
   remoteMeta?: PushContext['remoteMeta']
-  visibleRemoteColumns?: string[]
   durationUnit?: 'day' | 'hour'
 } = {}): PushContext {
   const mapping = overrides.mapping ?? defaultFieldMapping()
@@ -37,8 +36,6 @@ function ctx(overrides: {
     keyByTaskId: overrides.keyByTaskId ?? new Map(),
     resources: overrides.resources ?? [],
     remoteMeta: overrides.remoteMeta ?? { trackers: [], statuses: [], priorities: [], versions: [], members: [] },
-    // Default: every imported extraField counts as a displayed column.
-    visibleRemoteColumns: overrides.visibleRemoteColumns ?? mapping.extraFields,
     workingHoursPerDay: 8,
     durationUnit: overrides.durationUnit ?? 'day',
   }
@@ -327,27 +324,26 @@ describe('buildIssuePayload', () => {
     expect(payload.custom_fields).toBeUndefined()
   })
 
-  it('skips extraFields whose column is not displayed', () => {
+  it('writes imported extraFields even when their column is not displayed', () => {
     const mapping = defaultFieldMapping()
     mapping.extraFields = ['status', 'cf_7']
     const task: ITask = { id: 1, text: 'A', status: 'Closed', cf_7: 'x' }
     const payload = buildIssuePayload(task, ctx({
       mapping,
-      visibleRemoteColumns: ['cf_7'],
       remoteMeta: { trackers: [], statuses: [{ id: 5, name: 'Closed' }], priorities: [], versions: [], members: [] },
     }), 'update')
 
-    expect(payload.status_id).toBeUndefined()
+    expect(payload.status_id).toBe(5)
     expect(payload.custom_fields).toEqual([{ id: 7, value: 'x' }])
   })
 
-  it('lets a displayed column value win over the mapped field for the same remote key', () => {
+  it('keeps the mapped value authoritative over an imported copy of the same key', () => {
     const mapping = defaultFieldMapping()
     mapping.extraFields = ['subject']
     const task: ITask = { id: 1, text: 'Mapped', subject: 'Column wins' }
     const payload = buildIssuePayload(task, ctx({ mapping }), 'update')
 
-    expect(payload.subject).toBe('Column wins')
+    expect(payload.subject).toBe('Mapped')
   })
 
   it('resolves tracker names case-insensitively with trimming', () => {
