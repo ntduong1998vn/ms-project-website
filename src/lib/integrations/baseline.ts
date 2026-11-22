@@ -81,7 +81,7 @@ export function hasLocalChanges(task: ITask, mapping: IntegrationFieldMapping, t
   const baseline = taskBaseline(task)
   const keys = new Set(tasks.filter((row) => row.externalSource === 'redmine').map((row) => String(row.externalKey)))
   const local = mapping.fields.successors ? localRelations(task, tasks, links, hoursPerDay, unit) : undefined
-  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(syncValue(task, field, tasks), baseline.base[field], field)) || !!(local && (local.blocked || baseline.relationsMapping !== mapping.fields.successors || !relationsEqual(local.relations, (baseline.relations ?? []).filter((row) => keys.has(row.key)))))
+  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(syncValue(task, field, tasks), baseline.base[field], field)) || !!(local && (local.blockedKeys.size > 0 || baseline.relationsMapping !== mapping.fields.successors || !relationsEqual(local.relations, (baseline.relations ?? []).filter((row) => keys.has(row.key)))))
 }
 
 export function maxCursor(current: string | undefined, values: Array<string | undefined>): string | undefined {

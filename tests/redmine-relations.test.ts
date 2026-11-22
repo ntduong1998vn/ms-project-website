@@ -83,12 +83,12 @@ describe('two-way successor relations', () => {
   })
   it.each(['local', 'remote'] as const)('resolves successor conflicts with %s', async (choice) => {
     const p = provider()
-    const pending = plan([], [link], [{ id: 8, key: '103', delay: 0 }])
+    const pending = plan([{ id: 8, key: '102', delay: 2 }], [{ ...link, lag: 3 }], [{ id: 8, key: '102', delay: 4 }])
     expect(pending.conflicts[0].fieldLabel).toBe('Successors')
     await expect(executeSync(pending, {}, vi.fn(), p)).rejects.toThrow('Choose a value')
     const result = await executeSync(pending, { [pending.conflicts[0].id]: choice }, vi.fn(), p)
     expect(result.report.conflictsResolved).toBe(1)
-    expect(result.links[0].target).toBe(choice === 'local' ? 2 : 3)
+    expect(result.links[0].lag).toBe(choice === 'local' ? 3 : 4)
     expect(p.createRelation).toHaveBeenCalledTimes(choice === 'local' ? 1 : 0)
   })
   it('pulls remote-only relations, skips dirty auto-pull conflicts, and handles legacy tasks', async () => {
@@ -96,9 +96,12 @@ describe('two-way successor relations', () => {
     const remote = [{ id: 8, key: '103', delay: 1 }]
     const pulled = await executeSync(plan([], [], remote), {}, vi.fn(), p)
     expect(pulled.links[0]).toMatchObject({ source: 1, target: 3, lag: 1 })
-    const auto = await executeSync(plan([], [link], remote, true), {}, vi.fn(), p)
-    expect(auto.links).toEqual([link])
-    expect(taskBaseline(auto.tasks[0])?.relations).toEqual([])
+    const base = [{ id: 8, key: '102', delay: 2 }]
+    const auto = await executeSync(plan(base, [link], [{ id: 8, key: '102', delay: 3 }], true), {}, vi.fn(), p)
+    expect(auto.links[0].lag).toBe(3)
+    const dirtyAuto = await executeSync(plan(base, [{ ...link, lag: 4 }], [{ id: 8, key: '102', delay: 3 }], true), {}, vi.fn(), p)
+    expect(dirtyAuto.links).toEqual([{ ...link, lag: 4 }])
+    expect(taskBaseline(dirtyAuto.tasks[0])?.relations).toEqual(base)
     expect(p.createRelation).not.toHaveBeenCalled()
     const legacy = plan([], [link], remote)
     delete legacy.tasks[0].externalSync
@@ -130,6 +133,32 @@ describe('two-way successor relations', () => {
       expect(result.report.skipped).toHaveLength(1)
       expect(hasLocalChanges(result.tasks[0], mapping, result.tasks, result.links)).toBe(true)
     }
+  })
+  it.each([{ type: 's2s' as const }, { lag: 0.5 }])('freezes only the unwritable successor while merging other local and remote changes: %o', async (edit) => {
+    const allTasks = [...tasks, ...[4, 5].map((id) => ({ id, text: `Task ${id}`, externalSource: 'redmine', externalKey: String(100 + id) }))]
+    const base = [{ id: 8, key: '102', delay: 2 }, { id: 10, key: '105', delay: 0 }]
+    const frozen = { ...link, ...edit }
+    const pending = planSync({
+      tasks: allTasks.map((task) => withBaseline(task, mapping, undefined, allTasks, task.id === 1 ? base : [])),
+      links: [frozen, { ...link, id: 2, target: 3, lag: 1 }, { ...link, id: 3, target: 5, lag: 0 }], resources: [],
+      issues: [{ key: '101', fields: { subject: 'Task 1', successors: [{ id: 8, key: '102', delay: 7 }, { id: 11, key: '104', delay: 0 }] } }],
+      descriptors: [], mapping, calendar: defaultCalendarConfig, durationUnit: 'day',
+    })
+    expect(pending.conflicts).toEqual([])
+    const p = provider()
+    const result = await executeSync(pending, {}, vi.fn(), p)
+    expect(p.createRelation).toHaveBeenCalledExactlyOnceWith('101', { key: '103', delay: 1 })
+    expect(p.deleteRelation).not.toHaveBeenCalled()
+    expect(result.links).toContainEqual(frozen)
+    expect(result.links).toContainEqual(expect.objectContaining({ source: 1, target: 3, lag: 1 }))
+    expect(result.links).toContainEqual(expect.objectContaining({ source: 1, target: 4, lag: 0 }))
+    expect(result.links.some((row) => row.target === 5)).toBe(false)
+    expect(result.links).toHaveLength(3)
+    expect(taskBaseline(result.tasks[0])?.relations).toEqual(expect.arrayContaining([base[0], { id: 99, key: '103', delay: 1 }, { id: 11, key: '104', delay: 0 }]))
+    expect(taskBaseline(result.tasks[0])?.relations).toHaveLength(3)
+    expect(result.report).toMatchObject({ pulled: 1, pushed: 1, failed: [], relationsAdded: 1 })
+    expect(result.report.skipped).toHaveLength(1)
+    expect(hasLocalChanges(result.tasks[0], mapping, result.tasks, result.links)).toBe(true)
   })
   it('preserves remote IDs on full Get and rejects removals without IDs', async () => {
     const rows = [{ id: 8, key: '102', delay: 2 }]

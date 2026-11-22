@@ -11,7 +11,8 @@ import { applyRelations, localRelations, pushRelations, relationsEqual } from '@
 export type SyncConflict = { id: string; issueKey: string; task: string; field: string; fieldLabel: string; local: unknown; remote: unknown }
 export type SyncChoice = 'local' | 'remote'
 type Change = { field: string; remoteKey: string; local: unknown; remote: unknown; action: 'push' | 'pull' | 'equal' | 'conflict' | 'skip'; conflictId: string }
-type TaskPlan = { original: ITask; remote?: RemoteIssue; changes: Change[]; relations?: Change; skipped: string[] }
+type RelationChange = Change & { key: string }
+type TaskPlan = { original: ITask; remote?: RemoteIssue; changes: Change[]; relations?: RelationChange[]; skipped: string[] }
 export type SyncPlan = {
   tasks: ITask[]; links: ILink[]; resources: GanttResource[]; inserted: ITask[]
   entries: TaskPlan[]; conflicts: SyncConflict[]; mapping: IntegrationFieldMapping; autoPull: boolean
@@ -116,7 +117,7 @@ export function planSync(input: {
         local, remote: value })
       return { field, remoteKey, local, remote: value, action, conflictId }
     })
-    let relations: Change | undefined
+    let relations: RelationChange[] | undefined
     const localLinks = localRelations(original, [...tasks, ...inserted], links, calendar.workingHoursPerDay, durationUnit)
     if (mapping.fields.successors) {
       const keys = new Set([...tasks, ...inserted].filter((row) => row.externalSource === 'redmine').map((row) => String(row.externalKey)))
@@ -124,15 +125,21 @@ export function planSync(input: {
       const remoteLinks = ((remote?.fields[mapping.fields.successors] ?? []) as RemoteRelation[]).filter((row) => keys.has(row.key))
       for (const row of (remote?.fields[mapping.fields.successors] ?? []) as RemoteRelation[]) if (!keys.has(row.key)) localLinks.skipped.push(`Successor issue ${row.key}: no linked task in this project.`)
       const known = baseline?.relationsMapping === mapping.fields.successors && baseline.relations !== undefined
-      const localChanged = !known || !relationsEqual(localLinks.relations, base)
-      const remoteChanged = !!remote && (!known || !relationsEqual(remoteLinks, base))
-      const equal = !!remote && relationsEqual(localLinks.relations, remoteLinks)
-      let action: Change['action'] = equal ? 'equal' : localChanged && remoteChanged ? 'conflict' : localChanged && known ? 'push' : remoteChanged ? 'pull' : 'skip'
-      if (input.autoPull && localChanged) action = remoteChanged && !equal ? 'conflict' : 'skip'
-      if (localLinks.blocked) action = 'skip'
-      const conflictId = JSON.stringify([key, 'successors'])
-      relations = { field: 'successors', remoteKey: mapping.fields.successors, local: localLinks.relations, remote: remote ? remoteLinks : base, action, conflictId }
-      if (action === 'conflict') conflicts.push({ id: conflictId, issueKey: key, task: String(original.text ?? key), field: 'successors', fieldLabel: 'Successors', local: localLinks.relations, remote: remoteLinks })
+      const targetKeys = new Set([...base, ...localLinks.relations, ...remoteLinks].map((row) => row.key))
+      relations = [...targetKeys].map((targetKey): RelationChange => {
+        const local = localLinks.relations.filter((row) => row.key === targetKey)
+        const previous = base.filter((row) => row.key === targetKey)
+        const incoming = remoteLinks.filter((row) => row.key === targetKey)
+        const localChanged = !known || !relationsEqual(local, previous)
+        const remoteChanged = !!remote && (!known || !relationsEqual(incoming, previous))
+        const equal = !!remote && relationsEqual(local, incoming)
+        let action: Change['action'] = equal ? 'equal' : localChanged && remoteChanged ? 'conflict' : localChanged && known ? 'push' : remoteChanged ? 'pull' : 'skip'
+        if (input.autoPull && localChanged) action = remoteChanged && !equal ? 'conflict' : 'skip'
+        if (localLinks.blockedKeys.has(targetKey)) action = 'skip'
+        const conflictId = JSON.stringify([key, 'successors', targetKey])
+        if (action === 'conflict') conflicts.push({ id: conflictId, issueKey: key, task: String(original.text ?? key), field: 'successors', fieldLabel: 'Successors', local, remote: incoming })
+        return { key: targetKey, field: 'successors', remoteKey: mapping.fields.successors!, local, remote: remote ? incoming : previous, action, conflictId }
+      })
     }
     return { original, remote, changes, relations, skipped: mapping.fields.successors ? localLinks.skipped : [] }
   })
@@ -185,32 +192,51 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
       }
       try {
         if (pushKeys.size && !plan.autoPull) await push(key, next, pushKeys)
-        let syncedRelations = taskBaseline(original)?.relations
-        let relationAction = relations?.action
-        if (relationAction === 'conflict') {
-          if (plan.autoPull) relationAction = 'skip'
-          else { relationAction = choices[relations!.conflictId] === 'local' ? 'push' : 'pull'; resolved++ }
-        }
-        if (relations && relationAction !== 'skip') {
-          syncedRelations = relations.remote as RemoteRelation[]
-          if (relationAction === 'push') {
+        const syncedRelations = new Map((taskBaseline(original)?.relations ?? []).map((row) => [row.key, row]))
+        const desiredLinks = new Map(localRelations(original, allTasks, mergedLinks, plan.calendar.workingHoursPerDay, plan.durationUnit).relations.map((row) => [row.key, row]))
+        let relationsPushed = false
+        let relationsPulled = false
+        let relationsComplete = true
+        for (const relation of relations ?? []) {
+          let action = relation.action
+          if (action === 'conflict') {
+            if (plan.autoPull) action = 'skip'
+            else { action = choices[relation.conflictId] === 'local' ? 'push' : 'pull'; resolved++ }
+          }
+          if (action === 'skip') { relationsComplete = false; continue }
+          let rows = relation.remote as RemoteRelation[]
+          if (action === 'push') {
             if (!relationProvider) throw new Error('Relation writes are unavailable.')
-            const result = await pushRelations(key, relations.local as RemoteRelation[], syncedRelations, relationProvider)
-            syncedRelations = result.relations
+            const result = await pushRelations(key, relation.local as RemoteRelation[], rows, relationProvider)
+            rows = result.relations
             report.relationsAdded! += result.added
             report.relationsRemoved! += result.removed
+            relationsPushed = true
           }
-          if (relationAction === 'pull') { mergedLinks = applyRelations(mergedLinks, original, allTasks, syncedRelations, plan.calendar.workingHoursPerDay, plan.durationUnit); pulled = true }
+          syncedRelations.delete(relation.key)
+          for (const row of rows) syncedRelations.set(row.key, row)
+          if (action === 'pull') {
+            desiredLinks.delete(relation.key)
+            for (const row of rows) desiredLinks.set(row.key, row)
+            relationsPulled = true
+          }
+        }
+        if (relations) {
           const knownKeys = new Set(allTasks.filter((task) => task.externalSource === 'redmine').map((task) => String(task.externalKey)))
-          const allRemote = (remote?.fields[relations.remoteKey] ?? taskBaseline(original)?.relations ?? []) as RemoteRelation[]
-          syncedRelations = [...syncedRelations, ...allRemote.filter((row) => !knownKeys.has(row.key))]
+          const allRemote = (remote?.fields[plan.mapping.fields.successors!] ?? taskBaseline(original)?.relations ?? []) as RemoteRelation[]
+          for (const targetKey of syncedRelations.keys()) if (!knownKeys.has(targetKey)) syncedRelations.delete(targetKey)
+          for (const row of allRemote) if (!knownKeys.has(row.key)) syncedRelations.set(row.key, row)
+          if (relationsPulled) {
+            mergedLinks = applyRelations(mergedLinks, original, allTasks, [...desiredLinks.values()], plan.calendar.workingHoursPerDay, plan.durationUnit)
+            pulled = true
+          }
         }
         next.externalSync = { ...taskBaseline(original), updatedOn: remote?.updatedOn ?? taskBaseline(original)?.updatedOn, base, mapping: baseMapping,
-          ...(relations && relationAction !== 'skip' ? { relations: syncedRelations, relationsMapping: plan.mapping.fields.successors! } : {}) }
+          ...(relations ? { relations: [...syncedRelations.values()], ...(relationsComplete ? { relationsMapping: plan.mapping.fields.successors! } : {}) } : {}) }
         completed.set(key, next)
         acceptedFields.set(key, accepted)
         if (pulled) report.pulled++
-        if (pushKeys.size || relationAction === 'push') report.pushed++
+        if (pushKeys.size || relationsPushed) report.pushed++
         report.conflictsResolved += resolved
       } catch (error) {
         report.failed.push({ key, task: String(original.text ?? key), error: error instanceof Error ? error.message : String(error) })
