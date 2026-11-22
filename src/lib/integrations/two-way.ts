@@ -146,9 +146,8 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
         baseMapping[change.field] = baselineFieldKey(change.field, change.remoteKey)
         accepted.add(change.field)
       }
-      if (pulledDate && plan.mapping.fields.end && next.start instanceof Date && next.end instanceof Date) {
+      if (pulledDate && !plan.mapping.fields.duration && plan.mapping.fields.end && next.start instanceof Date && next.end instanceof Date) {
         next.duration = next.type === 'milestone' ? 0 : Math.max(1, calculateTaskDuration(next.start, next.end, plan.calendar, plan.durationUnit))
-        if (accepted.has('duration')) base.duration = next.duration
       }
       try {
         if (pushKeys.size && !plan.autoPull) await push(key, next, pushKeys)

@@ -92,6 +92,22 @@ describe('baseline and comparator', () => {
 })
 
 describe('three-way merge', () => {
+  it.each(['local', 'remote', 'auto'] as const)('preserves the mapped duration merge outcome alongside a pulled date (%s)', async (choice) => {
+    const datesMapping = { ...mapping, fields: { ...mapping.fields, start: 'start_date', end: 'due_date', duration: 'cf_2' } }
+    const original = withBaseline({ ...task(), start: new Date(2026, 8, 7), end: new Date(2026, 8, 8), duration: 1 }, datesMapping)
+    const tasks = [{ ...original, duration: 2 }]
+    const plan = planSync({ tasks, links: [], resources: [], issues: [{ ...issue(), fields: { ...issue().fields, start_date: '2026-09-07', due_date: '2026-09-10', cf_2: '4' } }],
+      descriptors: [{ key: 'cf_2', label: 'Duration', kind: 'custom', valueType: 'number' }], mapping: datesMapping, calendar: defaultCalendarConfig, durationUnit: 'day', autoSchedule: true, autoPull: choice === 'auto' })
+    expect(plan.conflicts.map((c) => c.field)).toEqual(['duration'])
+    const push = vi.fn(async () => {})
+    const result = await executeSync(plan, choice === 'auto' ? {} : { [plan.conflicts[0].id]: choice }, push)
+    const merged = mergeSyncTasks(tasks, tasks, result.tasks, datesMapping, { ...plan, acceptedFields: result.acceptedFields })
+    expect(merged[0].duration).toBe(choice === 'remote' ? 4 : 2)
+    if (choice === 'local') expect(push).toHaveBeenCalledWith('101', expect.objectContaining({ duration: 2 }), new Set(['cf_2']))
+    else expect(push).not.toHaveBeenCalled()
+    expect(taskBaseline(merged[0])?.base.duration).toBe(choice === 'auto' ? 1 : choice === 'remote' ? 4 : 2)
+    expect(hasLocalChanges(merged[0], datesMapping, merged)).toBe(choice === 'auto')
+  })
   it.each([false, true])('keeps a pulled finish with unmapped Duration and baselines the final schedule (constraint: %s)', async (constraint) => {
     const datesMapping = { ...mapping, fields: { ...mapping.fields, start: 'start_date', end: 'due_date' } }
     const original = withBaseline({ ...task(), start: new Date(2026, 8, 7), end: new Date(2026, 8, 8), duration: 1 }, datesMapping)
