@@ -6,6 +6,7 @@ import type {
   RemoteFieldDescriptor,
   RemoteIssue,
   RemoteProjectMetadata,
+  RemoteRelation,
 } from '@/lib/integrations/types'
 import {
   buildIssuePayload,
@@ -39,9 +40,8 @@ class RedmineRequestError extends Error {
 }
 
 export function createRedmineProvider(settings: IntegrationSettings): IssueTrackerProvider {
-  // Persisted useDevProxy must no-op outside dev — no proxy exists in prod builds.
-  const useProxy = settings.useDevProxy && import.meta.env.DEV
-  const base = useProxy ? '/redmine-proxy' : settings.baseUrl.replace(/\/+$/, '')
+  const useProxy = settings.useDevProxy
+  const base = useProxy ? (import.meta.env.DEV ? '/redmine-proxy' : '/api/redmine-proxy') : settings.baseUrl.replace(/\/+$/, '')
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const headers: Record<string, string> = { 'X-Redmine-API-Key': settings.apiKey }
@@ -53,7 +53,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     } catch (err) {
       // fetch rejects with TypeError on network failure / CORS block
       if (err instanceof TypeError) {
-        throw new Error('Cannot reach Redmine. Check the URL, or enable "Use dev proxy" (CORS).')
+        throw new Error('Cannot reach Redmine. Check the URL, enable "Use proxy (avoids CORS)", and configure REDMINE_ALLOWED_ORIGINS on Vercel.')
       }
       throw err
     }
@@ -273,6 +273,16 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     fetchIssues,
     createIssue,
     updateIssue,
+    async createRelation(key: string, relation: RemoteRelation): Promise<RemoteRelation> {
+      const result = await request<{ relation: { id: number } }>(`/issues/${encodeURIComponent(key)}/relations.json`, {
+        method: 'POST', body: JSON.stringify({ relation: { issue_to_id: Number(relation.key), relation_type: 'precedes', delay: relation.delay } }),
+      })
+      if (!result?.relation?.id) throw new Error('Redmine did not return a relation ID.')
+      return { ...relation, id: result.relation.id }
+    },
+    async deleteRelation(id: number): Promise<void> {
+      await request(`/relations/${encodeURIComponent(id)}.json`, { method: 'DELETE' })
+    },
     fetchProjectMetadata,
   }
 }

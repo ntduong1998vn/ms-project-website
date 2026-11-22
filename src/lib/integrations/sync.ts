@@ -18,6 +18,7 @@ import {
 } from '@/lib/scheduler'
 import { getNextNumericTaskId, hasParentCycle, sameTaskId } from '@/lib/task-helpers'
 import { ensureSyncIdentities, withBaseline } from '@/lib/integrations/baseline'
+import type { RemoteRelation } from '@/lib/integrations/types'
 
 export function normalizeRemoteHierarchy(tasks: ITask[]): ITask[] {
   const types = new Map(tasks.map((task) => [String(task.id), task.type]))
@@ -410,6 +411,6 @@ export function applyRemoteIssues(
   const fetched = new Map(issues.map((issue) => [issue.key, issue]))
   const identified = ensureSyncIdentities(scheduled)
   const tasks = identified.map((task) => task.externalSource === providerId && fetched.has(String(task.externalKey))
-    ? withBaseline(task, mapping, fetched.get(String(task.externalKey))?.updatedOn, identified) : task)
+    ? withBaseline(task, mapping, fetched.get(String(task.externalKey))?.updatedOn, identified, (fetched.get(String(task.externalKey))?.fields[mapping.fields.successors ?? ''] ?? []) as RemoteRelation[]) : task)
   return { kind: 'success', tasks, links: mergedLinks, resources: nextResources, inserted, updated }
 }

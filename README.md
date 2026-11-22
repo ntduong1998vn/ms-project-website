@@ -1,5 +1,9 @@
 # React + TypeScript + Vite
 
+## Redmine proxy on Vercel
+
+Set `REDMINE_ALLOWED_ORIGINS` in Vercel to a comma-separated list of trusted Redmine origins, e.g. `https://redmine.example.com,https://issues.example.org`. Empty means the production proxy is disabled (403). Redeploy after changing it. Enable **Use proxy (avoids CORS)** in connection settings; the saved `useDevProxy` option remains compatible. Development uses Vite's local proxy; production uses `/api/redmine-proxy/*`. Redmine subpaths are supported. Only allow servers you trust: requests forward the caller's API key, not a server credential. Cookies and redirects are not forwarded; request bodies are limited to 1 MiB.
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:

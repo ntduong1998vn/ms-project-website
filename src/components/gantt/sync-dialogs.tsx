@@ -36,6 +36,8 @@ export function SyncResultsDialog({ report, onClose, onRetry }: { report: SyncRe
     <Dialog.Overlay className={overlay} /><Dialog.Content className={content}>
       <Dialog.Title className="text-lg font-semibold">Sync results</Dialog.Title>
       <Dialog.Description className="mt-2 text-sm">{report.pulled} pulled · {report.pushed} pushed · {report.inserted} inserted · {report.conflictsResolved} conflicts resolved · {report.failed.length} failed</Dialog.Description>
+      <p className="mt-2 text-sm">Relations: {report.relationsAdded ?? 0} added · {report.relationsRemoved ?? 0} removed · {report.skipped?.length ?? 0} skipped</p>
+      {!!report.skipped?.length && <ul className="my-3 space-y-1 text-sm text-muted-foreground">{report.skipped.map((row, index) => <li key={`${row.key}:${index}`}>#{row.key}: {row.error}</li>)}</ul>}
       {report.failed.length > 0 && <table className="my-4 w-full text-left text-sm"><thead><tr><th className="p-2">Issue / task</th><th className="p-2">Error</th></tr></thead><tbody>{report.failed.map((failure) => <tr key={failure.key} className="border-t border-border"><td className="p-2">#{failure.key} {failure.task}</td><td className="p-2 text-destructive">{failure.error}</td></tr>)}</tbody></table>}
       <div className="mt-5 flex justify-end gap-2">{report.failed.length > 0 && <Button variant="outline" onClick={onRetry}>Retry failed</Button>}<Button onClick={onClose}>Close</Button></div>
     </Dialog.Content>

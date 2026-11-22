@@ -1,22 +1,24 @@
 import type { ILink, ITask } from '@svar-ui/react-gantt'
 import type { GanttResource } from '@/types/gantt'
-import type { IntegrationFieldMapping, IssueTrackerProvider, PushContext, RemoteFieldDescriptor, RemoteIssue } from '@/lib/integrations/types'
+import type { IntegrationFieldMapping, IssueTrackerProvider, PushContext, RemoteFieldDescriptor, RemoteIssue, RemoteRelation } from '@/lib/integrations/types'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import { autoScheduleTasks, calculateTaskDuration } from '@/lib/scheduler'
 import { applyRemoteIssues, normalizeRemoteHierarchy } from '@/lib/integrations/sync'
 import { syncTaskFields } from '@/lib/integrations/fields'
 import { baselineFieldKey, baselineHasField, ensureSyncIdentities, parentIdFromIdentity, syncEqual, syncFields, syncValue, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
+import { applyRelations, localRelations, pushRelations, relationsEqual } from '@/lib/integrations/relations'
 
 export type SyncConflict = { id: string; issueKey: string; task: string; field: string; fieldLabel: string; local: unknown; remote: unknown }
 export type SyncChoice = 'local' | 'remote'
 type Change = { field: string; remoteKey: string; local: unknown; remote: unknown; action: 'push' | 'pull' | 'equal' | 'conflict' | 'skip'; conflictId: string }
-type TaskPlan = { original: ITask; remote?: RemoteIssue; changes: Change[] }
+type TaskPlan = { original: ITask; remote?: RemoteIssue; changes: Change[]; relations?: Change; skipped: string[] }
 export type SyncPlan = {
   tasks: ITask[]; links: ILink[]; resources: GanttResource[]; inserted: ITask[]
   entries: TaskPlan[]; conflicts: SyncConflict[]; mapping: IntegrationFieldMapping; autoPull: boolean
   calendar: ProjectCalendarConfig; durationUnit: 'day' | 'hour'; autoSchedule: boolean
+  skipped: Array<{ key: string; error: string }>
 }
-export type SyncReport = { pulled: number; pushed: number; inserted: number; conflictsResolved: number; failed: Array<{ key: string; task: string; error: string }> }
+export type SyncReport = { pulled: number; pushed: number; inserted: number; conflictsResolved: number; failed: Array<{ key: string; task: string; error: string }>; skipped?: Array<{ key: string; error: string }>; relationsAdded?: number; relationsRemoved?: number }
 type SyncScheduling = Pick<SyncPlan, 'calendar' | 'durationUnit' | 'autoSchedule' | 'links'> & { acceptedFields?: Map<string, Set<string>> }
 
 function scheduleMergedTasks(tasks: ITask[], scheduling: SyncScheduling): ITask[] {
@@ -104,21 +106,42 @@ export function planSync(input: {
         local, remote: value })
       return { field, remoteKey, local, remote: value, action, conflictId }
     })
-    return { original, remote, changes }
+    let relations: Change | undefined
+    const localLinks = localRelations(original, [...tasks, ...inserted], links, calendar.workingHoursPerDay, durationUnit)
+    if (mapping.fields.successors) {
+      const keys = new Set([...tasks, ...inserted].filter((row) => row.externalSource === 'redmine').map((row) => String(row.externalKey)))
+      const base = (baseline?.relations ?? []).filter((row) => keys.has(row.key))
+      const remoteLinks = ((remote?.fields[mapping.fields.successors] ?? []) as RemoteRelation[]).filter((row) => keys.has(row.key))
+      for (const row of (remote?.fields[mapping.fields.successors] ?? []) as RemoteRelation[]) if (!keys.has(row.key)) localLinks.skipped.push(`Successor issue ${row.key}: no linked task in this project.`)
+      const known = baseline?.relationsMapping === mapping.fields.successors && baseline.relations !== undefined
+      const localChanged = !known || !relationsEqual(localLinks.relations, base)
+      const remoteChanged = !!remote && (!known || !relationsEqual(remoteLinks, base))
+      const equal = !!remote && relationsEqual(localLinks.relations, remoteLinks)
+      let action: Change['action'] = equal ? 'equal' : localChanged && remoteChanged ? 'conflict' : localChanged && known ? 'push' : remoteChanged ? 'pull' : 'skip'
+      if (input.autoPull && localChanged) action = remoteChanged && !equal ? 'conflict' : 'skip'
+      const conflictId = JSON.stringify([key, 'successors'])
+      relations = { field: 'successors', remoteKey: mapping.fields.successors, local: localLinks.relations, remote: remote ? remoteLinks : base, action, conflictId }
+      if (action === 'conflict') conflicts.push({ id: conflictId, issueKey: key, task: String(original.text ?? key), field: 'successors', fieldLabel: 'Successors', local: localLinks.relations, remote: remoteLinks })
+    }
+    return { original, remote, changes, relations, skipped: mapping.fields.successors ? localLinks.skipped : [] }
   })
-  return { tasks, links: converted.kind === 'success' ? converted.links : links, resources: converted.kind === 'success' ? converted.resources : resources,
-    inserted, entries, conflicts, mapping, autoPull: !!input.autoPull, calendar, durationUnit, autoSchedule: !!input.autoSchedule }
+  return { tasks, links, resources: converted.kind === 'success' ? converted.resources : resources,
+    inserted, entries, conflicts, mapping, autoPull: !!input.autoPull, calendar, durationUnit, autoSchedule: !!input.autoSchedule,
+    skipped: mapping.fields.successors ? links.filter((link) => !tasks.some((task) => String(task.id) === String(link.source) && task.externalSource === 'redmine' && task.externalKey)).map((link) => ({ key: `local:${link.source}`, error: `Link to task ${link.target}: source task is not linked to Redmine.` })) : [] }
 }
 
-export async function executeSync(plan: SyncPlan, choices: Record<string, SyncChoice>, push: (key: string, task: ITask, keys: ReadonlySet<string>) => Promise<void>) {
+export async function executeSync(plan: SyncPlan, choices: Record<string, SyncChoice>, push: (key: string, task: ITask, keys: ReadonlySet<string>) => Promise<void>, relationProvider?: Pick<IssueTrackerProvider, 'createRelation' | 'deleteRelation'>) {
   if (!plan.autoPull && plan.conflicts.some((c) => !choices[c.id])) throw new Error('Choose a value for every conflict.')
-  const report: SyncReport = { pulled: 0, pushed: 0, inserted: plan.inserted.length, conflictsResolved: 0, failed: [] }
+  const report: SyncReport = { pulled: 0, pushed: 0, inserted: plan.inserted.length, conflictsResolved: 0, failed: [], skipped: [...plan.skipped, ...plan.entries.flatMap((entry) => entry.skipped.map((error) => ({ key: String(entry.original.externalKey), error })))], relationsAdded: 0, relationsRemoved: 0 }
+  let mergedLinks = [...plan.links]
+  const allTasks = [...plan.tasks, ...plan.inserted]
+  for (const task of plan.inserted) if (plan.mapping.fields.successors) mergedLinks = applyRelations(mergedLinks, task, allTasks, taskBaseline(task)?.relations ?? [], plan.calendar.workingHoursPerDay, plan.durationUnit)
   const completed = new Map<string, ITask>()
   const acceptedFields = new Map<string, Set<string>>()
   let index = 0
   await Promise.all(Array.from({ length: Math.min(4, plan.entries.length) }, async () => {
     while (index < plan.entries.length) {
-      const { original, remote, changes } = plan.entries[index++]
+      const { original, remote, changes, relations } = plan.entries[index++]
       const key = String(original.externalKey)
       const next = { ...original }
       const base = { ...taskBaseline(original)?.base }
@@ -151,18 +174,39 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
       }
       try {
         if (pushKeys.size && !plan.autoPull) await push(key, next, pushKeys)
-        next.externalSync = { updatedOn: remote?.updatedOn ?? taskBaseline(original)?.updatedOn, base, mapping: baseMapping }
+        let syncedRelations = taskBaseline(original)?.relations
+        let relationAction = relations?.action
+        if (relationAction === 'conflict') {
+          if (plan.autoPull) relationAction = 'skip'
+          else { relationAction = choices[relations!.conflictId] === 'local' ? 'push' : 'pull'; resolved++ }
+        }
+        if (relations && relationAction !== 'skip') {
+          syncedRelations = relations.remote as RemoteRelation[]
+          if (relationAction === 'push') {
+            if (!relationProvider) throw new Error('Relation writes are unavailable.')
+            const result = await pushRelations(key, relations.local as RemoteRelation[], syncedRelations, relationProvider)
+            syncedRelations = result.relations
+            report.relationsAdded! += result.added
+            report.relationsRemoved! += result.removed
+          }
+          if (relationAction === 'pull') { mergedLinks = applyRelations(mergedLinks, original, allTasks, syncedRelations, plan.calendar.workingHoursPerDay, plan.durationUnit); pulled = true }
+          const knownKeys = new Set(allTasks.filter((task) => task.externalSource === 'redmine').map((task) => String(task.externalKey)))
+          const allRemote = (remote?.fields[relations.remoteKey] ?? taskBaseline(original)?.relations ?? []) as RemoteRelation[]
+          syncedRelations = [...syncedRelations, ...allRemote.filter((row) => !knownKeys.has(row.key))]
+        }
+        next.externalSync = { ...taskBaseline(original), updatedOn: remote?.updatedOn ?? taskBaseline(original)?.updatedOn, base, mapping: baseMapping,
+          ...(relations && relationAction !== 'skip' ? { relations: syncedRelations, relationsMapping: plan.mapping.fields.successors! } : {}) }
         completed.set(key, next)
         acceptedFields.set(key, accepted)
         if (pulled) report.pulled++
-        if (pushKeys.size) report.pushed++
+        if (pushKeys.size || relationAction === 'push') report.pushed++
         report.conflictsResolved += resolved
       } catch (error) {
         report.failed.push({ key, task: String(original.text ?? key), error: error instanceof Error ? error.message : String(error) })
       }
     }
   }))
-  const mergedTasks = normalizeRemoteHierarchy([...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => withBaseline(task, plan.mapping, taskBaseline(task)?.updatedOn, [...plan.tasks, ...plan.inserted]))])
-  return { tasks: scheduleMergedTasks(mergedTasks, { ...plan, acceptedFields }),
-    links: plan.links, resources: plan.resources, report, acceptedFields }
+  const mergedTasks = normalizeRemoteHierarchy([...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted])
+  return { tasks: scheduleMergedTasks(mergedTasks, { ...plan, links: mergedLinks, acceptedFields }),
+    links: mergedLinks, resources: plan.resources, report, acceptedFields }
 }

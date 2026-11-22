@@ -35,6 +35,8 @@ export type RemoteIssue = {
   fields: Record<string, unknown>
 }
 
+export type RemoteRelation = { id?: number; key: string; delay: number }
+
 export type RemoteProjectMetadata = {
   customFieldsComplete: boolean
   warnings: string[]
@@ -61,7 +63,7 @@ export type IntegrationSettings = {
   baseUrl: string                                // e.g. 'https://redmine.example.com'
   apiKey: string
   projectIdentifier: string                      // Redmine project identifier or numeric id; '' = all visible issues
-  useDevProxy: boolean                           // route via /redmine-proxy (dev only)
+  useDevProxy: boolean                           // saved name retained for dev and production proxy
   trackerId: number | null                       // used on create; null = server default
   mapping: IntegrationFieldMapping
   // Cached project metadata from last fetchProjectMetadata; drives the
@@ -100,5 +102,7 @@ export interface IssueTrackerProvider {
   fetchIssues(options?: { updatedSince?: string }): Promise<RemoteIssue[]>
   createIssue(task: ITask, ctx: PushContext): Promise<string>   // returns new issue key
   updateIssue(key: string, task: ITask, ctx: PushContext, remoteKeys?: ReadonlySet<string>): Promise<void>
+  createRelation(key: string, relation: RemoteRelation): Promise<RemoteRelation>
+  deleteRelation(id: number): Promise<void>
   fetchProjectMetadata(): Promise<RemoteProjectMetadata>
 }

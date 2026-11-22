@@ -118,7 +118,7 @@ describe('request error handling', () => {
   it('translates network TypeErrors into a CORS hint', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))))
     await expect(createRedmineProvider(settings()).testConnection()).rejects.toThrow(
-      'Cannot reach Redmine. Check the URL, or enable "Use dev proxy" (CORS).'
+      'Cannot reach Redmine. Check the URL, enable "Use proxy (avoids CORS)", and configure REDMINE_ALLOWED_ORIGINS on Vercel.'
     )
   })
 
@@ -129,6 +129,14 @@ describe('request error handling', () => {
 })
 
 describe('dev proxy mode', () => {
+  it('uses the deployed proxy in production with the saved useDevProxy flag', async () => {
+    vi.stubEnv('DEV', false)
+    try {
+      const mock = stubFetch(() => jsonResponse({ user: { id: 1, login: 'alice' } }))
+      await createRedmineProvider(settings({ useDevProxy: true })).testConnection()
+      expect(mock.mock.calls[0][0]).toBe('/api/redmine-proxy/users/current.json')
+    } finally { vi.unstubAllEnvs() }
+  })
   it('routes through /redmine-proxy with the x-redmine-target header', async () => {
     const mock = stubFetch(() => jsonResponse({ user: { id: 1, login: 'alice' } }))
     await createRedmineProvider(settings({ useDevProxy: true })).testConnection()

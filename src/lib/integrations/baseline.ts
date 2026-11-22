@@ -1,12 +1,13 @@
-import type { ITask } from '@svar-ui/react-gantt'
-import type { IntegrationFieldMapping, IntegrationSettings } from '@/lib/integrations/types'
+import type { ILink, ITask } from '@svar-ui/react-gantt'
+import type { IntegrationFieldMapping, IntegrationSettings, RemoteRelation } from '@/lib/integrations/types'
 import type { TaskWithResources } from '@/types/gantt'
 import { parseLocalDate } from '@/lib/integrations/fields'
+import { localRelations, relationsEqual } from '@/lib/integrations/relations'
 
 export function syncFields(mapping: IntegrationFieldMapping): Array<{ field: string; remoteKey: string }> {
   return [
     ...Object.entries(mapping.fields).filter(([field, key]) => key && field !== 'successors').map(([field, key]) => ({ field, remoteKey: key! })),
-    ...mapping.extraFields.map((key) => ({ field: key, remoteKey: key })),
+    ...mapping.extraFields.filter((key) => key !== 'successors').map((key) => ({ field: key, remoteKey: key })),
   ]
 }
 
@@ -63,7 +64,7 @@ export function parentIdFromIdentity(identity: unknown, tasks: ITask[]): ITask['
 }
 
 export function syncFetchCursor(settings: IntegrationSettings, linked: ITask[]): string | undefined {
-  return settings.syncMappingFingerprint === mappingFingerprint(settings.mapping) && linked.length > 0 && linked.every((task) => syncFields(settings.mapping).every(({ field, remoteKey }) => baselineHasField(task, field, remoteKey)))
+  return settings.syncMappingFingerprint === mappingFingerprint(settings.mapping) && linked.length > 0 && linked.every((task) => syncFields(settings.mapping).every(({ field, remoteKey }) => baselineHasField(task, field, remoteKey)) && (!settings.mapping.fields.successors || taskBaseline(task)?.relationsMapping === settings.mapping.fields.successors))
     ? settings.syncCursor : undefined
 }
 
@@ -71,13 +72,15 @@ export function snapshot(task: ITask, mapping: IntegrationFieldMapping, tasks: I
   return Object.fromEntries(syncFields(mapping).map(({ field }) => [field, structuredClone(syncValue(task, field, tasks) ?? null)]))
 }
 
-export function withBaseline(task: ITask, mapping: IntegrationFieldMapping, updatedOn?: string, tasks: ITask[] = []): ITask {
-  return { ...task, externalSync: { updatedOn, base: snapshot(task, mapping, tasks), mapping: Object.fromEntries(syncFields(mapping).map(({ field, remoteKey }) => [field, baselineFieldKey(field, remoteKey)])) } }
+export function withBaseline(task: ITask, mapping: IntegrationFieldMapping, updatedOn?: string, tasks: ITask[] = [], relations: RemoteRelation[] = []): ITask {
+  return { ...task, externalSync: { updatedOn, base: snapshot(task, mapping, tasks), mapping: Object.fromEntries(syncFields(mapping).map(({ field, remoteKey }) => [field, baselineFieldKey(field, remoteKey)])),
+    ...(mapping.fields.successors ? { relations: structuredClone(relations), relationsMapping: mapping.fields.successors } : {}) } }
 }
 
-export function hasLocalChanges(task: ITask, mapping: IntegrationFieldMapping, tasks: ITask[] = []): boolean {
+export function hasLocalChanges(task: ITask, mapping: IntegrationFieldMapping, tasks: ITask[] = [], links: ILink[] = [], hoursPerDay = 8, unit: 'day' | 'hour' = 'day'): boolean {
   const baseline = taskBaseline(task)
-  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(syncValue(task, field, tasks), baseline.base[field], field))
+  const keys = new Set(tasks.filter((row) => row.externalSource === 'redmine').map((row) => String(row.externalKey)))
+  return !baseline || syncFields(mapping).some(({ field, remoteKey }) => !baselineHasField(task, field, remoteKey) || !syncEqual(syncValue(task, field, tasks), baseline.base[field], field)) || !!(mapping.fields.successors && (baseline.relationsMapping !== mapping.fields.successors || !relationsEqual(localRelations(task, tasks, links, hoursPerDay, unit).relations, (baseline.relations ?? []).filter((row) => keys.has(row.key)))))
 }
 
 export function maxCursor(current: string | undefined, values: Array<string | undefined>): string | undefined {

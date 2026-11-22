@@ -1367,8 +1367,8 @@ export function useGanttProject() {
   const finishSync = async (session: NonNullable<typeof pendingSync>, choices: Record<string, SyncChoice>) => {
     try {
       const provider = createProvider(session.settings)
-      const result = await executeSync(session.plan, choices, (key, task, keys) => provider.updateIssue(key, task, session.ctx, keys))
-      setTasks((current) => mergeSyncTasks(session.plan.tasks, current, result.tasks, session.settings.mapping, { ...session.plan, acceptedFields: result.acceptedFields }))
+      const result = await executeSync(session.plan, choices, (key, task, keys) => provider.updateIssue(key, task, session.ctx, keys), provider)
+      setTasks((current) => mergeSyncTasks(session.plan.tasks, current, result.tasks, session.settings.mapping, { ...session.plan, links: result.links, acceptedFields: result.acceptedFields }))
       setLinks(result.links)
       setResourceList(result.resources)
       if (result.report.failed.length === 0 && (!session.plan.autoPull || session.plan.conflicts.length === 0)) {
@@ -1428,7 +1428,7 @@ export function useGanttProject() {
   const handleApplySync = async (choices: Record<string, SyncChoice>) => { if (pendingSync) await finishSync(pendingSync, choices) }
   const handleCancelSync = () => { setPendingSync(null); busyRef.current = false; setIntegrationBusy(null) }
   const handleRetrySync = () => { if (syncReport) void runRedmineSync(false, new Set(syncReport.failed.map((failure) => failure.key))) }
-  const dirtySyncCount = linkedTasks(tasks, 'redmine').filter((task) => hasLocalChanges(task, integrationSettings.mapping, tasks)).length
+  const dirtySyncCount = linkedTasks(tasks, 'redmine').filter((task) => hasLocalChanges(task, integrationSettings.mapping, tasks, links, calendarConfig.workingHoursPerDay, durationUnit)).length
 
   const autoPullRef = useRef(runRedmineSync)
   useEffect(() => { autoPullRef.current = runRedmineSync })
