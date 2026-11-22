@@ -1,11 +1,14 @@
 import { defaultFieldMapping } from './fields'
-import type { IntegrationSettings } from './types'
+import { redmineStandardFields } from './redmine/fields'
+import type { IntegrationSettings, RemoteFieldDescriptor, RemoteProjectMetadata } from './types'
 
 export const STORAGE_KEY = 'ms-project-web:integration:redmine'
 
 export function defaultIntegrationSettings(): IntegrationSettings {
   return {
     provider: 'redmine',
+    fieldOverrides: {},
+    manualFields: [],
     baseUrl: '',
     apiKey: '',
     projectIdentifier: '',
@@ -18,6 +21,46 @@ export function defaultIntegrationSettings(): IntegrationSettings {
     knownPriorities: [],
     knownVersions: [],
     knownMembers: [],
+  }
+}
+
+export function effectiveFields(settings: IntegrationSettings): RemoteFieldDescriptor[] {
+  const fields = new Map((settings.knownFields.length ? settings.knownFields : redmineStandardFields).map((f) => [f.key, f]))
+  for (const field of settings.manualFields ?? []) fields.set(field.key, field)
+  return [...fields.values()].map((field) => {
+    const override = settings.fieldOverrides?.[field.key]
+    return override ? {
+      ...field, ...override,
+      options: override.options === undefined ? field.options : override.options.map((value) => ({ id: value, label: value })),
+    } : { ...field }
+  })
+}
+
+export function invalidateIntegrationMetadata(settings: IntegrationSettings, patch: Partial<IntegrationSettings>): IntegrationSettings {
+  const changed = (['baseUrl', 'projectIdentifier'] as const).some((key) => patch[key] !== undefined && patch[key] !== settings[key])
+  if (!changed) return { ...settings, ...patch }
+  return {
+    ...settings, ...patch, knownFields: [], knownTrackers: [], knownStatuses: [], knownPriorities: [], knownVersions: [], knownMembers: [],
+    manualFields: [], fieldOverrides: {}, trackerId: null,
+  }
+}
+
+export function applyIntegrationMetadata(settings: IntegrationSettings, meta: RemoteProjectMetadata): IntegrationSettings {
+  const knownFields = [...meta.fields]
+  if (!meta.customFieldsComplete) {
+    const referenced = new Set([...Object.values(settings.mapping.fields), ...settings.mapping.extraFields])
+    const discovered = new Set(meta.fields.map((f) => f.key))
+    knownFields.push(...settings.knownFields.filter((f) => f.key.startsWith('cf_') && referenced.has(f.key) && !discovered.has(f.key)))
+  }
+  const keys = new Set([...knownFields, ...settings.manualFields].map((f) => f.key))
+  const keep = (key: string) => !meta.customFieldsComplete || !key.startsWith('cf_') || keys.has(key)
+  return {
+    ...settings, knownFields, knownTrackers: meta.trackers, knownStatuses: meta.statuses,
+    knownPriorities: meta.priorities, knownVersions: meta.versions, knownMembers: meta.members,
+    mapping: {
+      fields: Object.fromEntries(Object.entries(settings.mapping.fields).map(([key, value]) => [key, value && keep(value) ? value : null])) as IntegrationSettings['mapping']['fields'],
+      extraFields: settings.mapping.extraFields.filter(keep),
+    },
   }
 }
 

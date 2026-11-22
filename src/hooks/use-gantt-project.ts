@@ -12,9 +12,8 @@ import { parseClipboardTable } from '@/lib/clipboard'
 import { addTaskAtPlacement, buildDependencyChain, collectTaskSubtreeIds, getNextNumericTaskId, isTaskParentAllowed, moveTaskAtPlacement, removeLinksTouching, resequenceProject, sameTaskId, toPositiveNumericTaskId } from '@/lib/task-helpers'
 import { computeCriticalPath } from '@/lib/critical-path'
 import { createProvider } from '@/lib/integrations'
-import { loadIntegrationSettings, saveIntegrationSettings } from '@/lib/integrations/settings'
+import { effectiveFields, applyIntegrationMetadata, loadIntegrationSettings, saveIntegrationSettings } from '@/lib/integrations/settings'
 import { applyRemoteIssues, linkedTasks, unlinkedTasks } from '@/lib/integrations/sync'
-import { redmineStandardFields } from '@/lib/integrations/redmine/fields'
 import type { IntegrationSettings, PushContext, RemoteFieldDescriptor, RemoteProjectMetadata } from '@/lib/integrations/types'
 import { toast } from 'sonner'
 
@@ -1196,12 +1195,12 @@ export function useGanttProject() {
     []
   )
 
-  const performRedmineGet = useCallback(async (baseTasks: ITask[], baseLinks: ILink[]) => {
+  const performRedmineGet = useCallback(async (baseTasks: ITask[], baseLinks: ILink[], overrideSettings?: IntegrationSettings) => {
     if (busyRef.current) return
     busyRef.current = true
     setIntegrationBusy('get')
     try {
-      const settings = integrationSettings
+      const settings = overrideSettings ?? integrationSettings
       const provider = createProvider(settings)
       // First fetch: grab project metadata so value types (e.g. estimated_hours)
       // resolve correctly; failures degrade to the standard field catalog.
@@ -1209,31 +1208,20 @@ export function useGanttProject() {
       if (settings.knownFields.length === 0) {
         meta = await provider.fetchProjectMetadata().catch(() => null)
       }
-      let mergedResources = resourceList
+      let mergedResources = mergeRedmineMembers(resourceList, settings.knownMembers)
       if (meta) {
-        const merged: IntegrationSettings = {
-          ...settings,
-          knownFields: meta.fields,
-          knownTrackers: meta.trackers,
-          knownStatuses: meta.statuses,
-          knownPriorities: meta.priorities,
-          knownVersions: meta.versions,
-          knownMembers: meta.members,
-        }
+        const merged = applyIntegrationMetadata(settings, meta)
         setIntegrationSettings(merged)
         saveIntegrationSettings(merged)
-        mergedResources = mergeRedmineMembers(resourceList, meta.members)
+        mergedResources = mergeRedmineMembers(mergedResources, meta.members)
       }
-      const descriptors = meta?.fields.length
-        ? meta.fields
-        : settings.knownFields.length
-          ? settings.knownFields
-          : redmineStandardFields
+      const resolvedSettings = meta ? applyIntegrationMetadata(settings, meta) : settings
+      const descriptors = effectiveFields(resolvedSettings)
       const issues = await provider.fetchIssues()
       const result = applyRemoteIssues(
         issues,
         descriptors,
-        settings.mapping,
+        resolvedSettings.mapping,
         { tasks: baseTasks, links: baseLinks, resources: mergedResources },
         'redmine',
         calendarConfig,
@@ -1259,6 +1247,11 @@ export function useGanttProject() {
       setIntegrationBusy(null)
     }
   }, [calendarConfig, durationUnit, integrationSettings, isAutoSchedule, resourceList])
+
+  const handleSaveAndGetIntegration = useCallback((settings: IntegrationSettings) => {
+    handleSaveIntegrationSettings(settings)
+    void performRedmineGet(tasks, links, settings)
+  }, [handleSaveIntegrationSettings, performRedmineGet, tasks, links])
 
   const handleRedmineGet = useCallback(() => {
     if (tasks.length === 0) {
@@ -1289,15 +1282,14 @@ export function useGanttProject() {
   }, [links, performRedmineGet, tasks])
 
   // Remote keys whose columns are actually displayable: visibleRemoteColumns
-  // minus keys that are mapped (a mapped key's column vanishes from the grid
-  // but would otherwise keep driving extraFields write-back invisibly).
+  // minus keys that are mapped to native task columns.
   // 'description' is exempt — its column is unified on task.details.
   const visibleRemoteFieldKeys = useMemo(() => {
     const mappedRemoteKeys = new Set(
       Object.values(integrationSettings.mapping.fields).filter((k): k is string => k !== null)
     )
     const knownKeys = new Set(
-      (integrationSettings.knownFields.length ? integrationSettings.knownFields : redmineStandardFields).map(
+      effectiveFields(integrationSettings).map(
         (f) => f.key
       )
     )
@@ -1324,7 +1316,7 @@ export function useGanttProject() {
       const provider = createProvider(settings)
       const ctx: PushContext = {
         mapping: settings.mapping,
-        descriptors: settings.knownFields.length ? settings.knownFields : redmineStandardFields,
+        descriptors: effectiveFields(settings),
         keyByTaskId: new Map(
           linkedTasks(tasks, 'redmine').map((task) => [String(task.id), String(task.externalKey)])
         ),
@@ -1336,7 +1328,6 @@ export function useGanttProject() {
           versions: settings.knownVersions,
           members: settings.knownMembers,
         },
-        visibleRemoteColumns: visibleRemoteFieldKeys,
         workingHoursPerDay: calendarConfig.workingHoursPerDay,
         durationUnit,
       }
@@ -1366,7 +1357,7 @@ export function useGanttProject() {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, visibleRemoteFieldKeys])
+  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks])
 
   const handleRedmineSync = useCallback(async () => {
     if (busyRef.current) return
@@ -1382,7 +1373,7 @@ export function useGanttProject() {
       const provider = createProvider(settings)
       const ctx: PushContext = {
         mapping: settings.mapping,
-        descriptors: settings.knownFields.length ? settings.knownFields : redmineStandardFields,
+        descriptors: effectiveFields(settings),
         keyByTaskId: new Map(
           linked.map((task) => [String(task.id), String(task.externalKey)])
         ),
@@ -1394,7 +1385,6 @@ export function useGanttProject() {
           versions: settings.knownVersions,
           members: settings.knownMembers,
         },
-        visibleRemoteColumns: visibleRemoteFieldKeys,
         workingHoursPerDay: calendarConfig.workingHoursPerDay,
         durationUnit,
       }
@@ -1419,7 +1409,7 @@ export function useGanttProject() {
       busyRef.current = false
       setIntegrationBusy(null)
     }
-  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks, visibleRemoteFieldKeys])
+  }, [calendarConfig, durationUnit, integrationSettings, resourceList, tasks])
 
   const handleRedmineFetchMetadata = useCallback(async () => {
     if (busyRef.current) return
@@ -1428,18 +1418,11 @@ export function useGanttProject() {
     try {
       const provider = createProvider(integrationSettings)
       const meta = await provider.fetchProjectMetadata()
-      const merged: IntegrationSettings = {
-        ...integrationSettings,
-        knownFields: meta.fields,
-        knownTrackers: meta.trackers,
-        knownStatuses: meta.statuses,
-        knownPriorities: meta.priorities,
-        knownVersions: meta.versions,
-        knownMembers: meta.members,
-      }
+      const merged = applyIntegrationMetadata(integrationSettings, meta)
       setIntegrationSettings(merged)
       saveIntegrationSettings(merged)
       upsertRedmineMembers(meta.members)
+      for (const warning of meta.warnings) toast.warning(warning)
       toast.info(
         `Project info: ${meta.members.length} members, ${meta.fields.length} fields, ${meta.trackers.length} trackers.`
       )
@@ -1485,7 +1468,7 @@ export function useGanttProject() {
   return {
     state: { calendarConfig, setCalendarConfig, isAutoSchedule, setIsAutoSchedule, isCalendarDialogOpen, setIsCalendarDialogOpen, csvImportData, setCsvImportData, clipboardImportData, setClipboardImportData, isColumnChooserOpen, setIsColumnChooserOpen, isWorkColumnVisible, setIsWorkColumnVisible, visibleRemoteColumns, setVisibleRemoteColumns, integrationSettings, setIntegrationSettings, isIntegrationDialogOpen, setIsIntegrationDialogOpen, isRedmineGetDialogOpen, setIsRedmineGetDialogOpen, integrationBusy, isGanttVisible, showCriticalPath, viewMode, activeTab, setActiveTab, selectedTaskId, setSelectedTaskId, selectedTaskIds, setSelectedTaskIds, pendingDeleteIds, durationUnit, setDurationUnit, zoom, setZoom, tasks, setTasks, links, setLinks, resourceList, setResourceList },
     derived: { totalTasks, summaryTasks, completedTasks, selectedTaskIndex, selectedTask, canIndent, canOutdent, canLink, canUnlink, pendingDeleteTasks, displayTasks, displayLinks, visibleRemoteFieldKeys },
-    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleRequestDeleteSelectedTasks, handleConfirmDeleteTasks, handleCancelDeleteTasks, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn, handleAddRemoteColumn, handleSaveIntegrationSettings, handleTestIntegrationConnection, handleFetchIntegrationMetadata, handleRedmineGet, handleRedmineGetClear, handleRedmineGetUpsert, handleRedminePushNew, handleRedmineSync, handleRedmineFetchMetadata },
+    actions: { handleTaskSelection, handleInit, handleUpdateTask, handleResourceChange, handleAddResource, handleDeleteResource, handleToggleTaskResource, handleTaskInfoChange, handleResourcesChange, handleAddTask, handleMoveTask, handleDeleteTask, handleAddLink, handleUpdateLink, handleDeleteLink, handleAddTaskInfoPredecessor, handleUpdateTaskInfoPredecessor, handleDeleteTaskInfoPredecessor, handleSaveCalendar, handleToggleAutoSchedule, handleToggleGanttVisibility, handleToggleCriticalPath, handleViewModeChange, handleDurationUnitChange, handleHighlightTime, handleAddTaskAction, handleAddMilestoneAction, handleIndent, handleOutdent, handleRequestDeleteSelectedTasks, handleConfirmDeleteTasks, handleCancelDeleteTasks, handleLinkSelectedTasks, handleUnlinkSelectedTasks, handleExportCsv, handleImportFile, handleImportCsv, handleClipboardConfirm, handlePasteFromMenu, handleNewProject, handleDurationChange, handleStartDateChange, handleFinishDateChange, handleOpenColumnChooser, handleAddWorkColumn, handleAddRemoteColumn, handleSaveIntegrationSettings, handleSaveAndGetIntegration, handleTestIntegrationConnection, handleFetchIntegrationMetadata, handleRedmineGet, handleRedmineGetClear, handleRedmineGetUpsert, handleRedminePushNew, handleRedmineSync, handleRedmineFetchMetadata },
     gantt: { api, ganttResources, scalePresets },
     fileInputRef,
   }

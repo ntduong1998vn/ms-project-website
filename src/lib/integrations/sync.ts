@@ -31,6 +31,12 @@ type RemoteEntry = {
 
 type RemoteSuccessor = { key: string; delay: number }
 
+function toNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return undefined
+  const number = Number(value)
+  return Number.isFinite(number) ? number : undefined
+}
+
 /** Tasks not yet linked to a remote issue of this provider — candidates for Push New. */
 export function unlinkedTasks(tasks: ITask[], providerId: string): ITask[] {
   return tasks.filter((task) => task.externalSource !== providerId || !task.externalKey)
@@ -211,7 +217,7 @@ export function applyRemoteIssues(
     // the mapped duration field (hours convert to the duration unit), then
     // existing/default. Milestones are always 0; other tasks clamp to >= 1.
     const rawDuration = field(issue, 'duration')
-    const numericDuration = typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : undefined
+    const numericDuration = toNumber(rawDuration)
     let duration: number
     if (type === 'milestone') {
       duration = 0
@@ -236,7 +242,7 @@ export function applyRemoteIssues(
     }
 
     const rawProgress = field(issue, 'progress')
-    const numericProgress = typeof rawProgress === 'number' && Number.isFinite(rawProgress) ? rawProgress : undefined
+    const numericProgress = toNumber(rawProgress)
     const progress =
       numericProgress !== undefined ? Math.min(100, Math.max(0, numericProgress)) : (matched?.progress ?? 0)
 

@@ -184,7 +184,8 @@ export function buildIssuePayload(
   if (f.duration && typeof task.duration === 'number' && Number.isFinite(task.duration)) {
     put(
       f.duration,
-      ctx.durationUnit === 'hour' ? task.duration : task.duration * ctx.workingHoursPerDay
+      ctx.descriptors.find((d) => d.key === f.duration)?.valueType === 'number' || ctx.durationUnit === 'hour'
+        ? task.duration : task.duration * ctx.workingHoursPerDay
     )
   }
   if (f.progress && typeof task.progress === 'number' && Number.isFinite(task.progress)) {
@@ -212,26 +213,23 @@ export function buildIssuePayload(
     if (createOpts?.projectIdentifier) payload.project_id = createOpts.projectIdentifier
   }
 
-  // extraFields (remote columns displayed in the grid): cf_* keys are pushed as
-  // custom_fields entries; standard keys write back so column edits reach
-  // Redmine. Runs AFTER the mapped-field writes so a displayed column's value
-  // wins when a key is both mapped and displayed. Keys imported but not shown
-  // as a column are never written.
+  // Mapped values take precedence over imported copies of the same field.
   const nameToId = (list: Array<{ id: number; name: string }>, name: unknown): number | null => {
     if (typeof name !== 'string' || name.trim() === '') return null
     const needle = name.trim().toLowerCase()
     return list.find((entry) => entry.name.trim().toLowerCase() === needle)?.id ?? null
   }
   for (const key of ctx.mapping.extraFields) {
-    if (!ctx.visibleRemoteColumns.includes(key)) continue
     const value = task[key]
     if (value === undefined || value === null) continue
     const cfId = parseCustomFieldKey(key)
     if (cfId !== null) {
+      if (customFields.some((field) => field.id === cfId)) continue
       // '' is allowed here — it clears the custom field.
       customFields.push({ id: cfId, value: toCustomFieldValue(key, value) })
       continue
     }
+    if (Object.hasOwn(payload, WRITE_KEY_OVERRIDES[key] ?? key)) continue
     // '' on a standard field would 422 — skip it.
     if (value === '') continue
     switch (key) {

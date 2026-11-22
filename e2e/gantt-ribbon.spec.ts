@@ -169,6 +169,9 @@ test('Delete Task removes the selected row', async ({ page }) => {
   await expect(deleteTask).toBeEnabled()
   await deleteTask.click()
 
+  const dialog = page.getByRole('dialog', { name: 'Delete 1 Task?' })
+  await dialog.getByRole('button', { name: 'Delete Task', exact: true }).click()
+
   await expect(rowByName(page, 'Production Deployment')).toHaveCount(0)
   await expect(gridRows(page).first()).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Task Name' })).toBeVisible()

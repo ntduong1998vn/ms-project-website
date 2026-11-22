@@ -16,6 +16,7 @@ import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
 import { useGanttColumns } from '@/components/gantt/use-gantt-columns'
 import { useGanttProject } from '@/hooks/use-gantt-project'
 import { ResourceUsageView, TaskUsageView } from '@/components/gantt/usage-views'
+import { effectiveFields } from '@/lib/integrations/settings'
 import { redmineStandardFields } from '@/lib/integrations/redmine/fields'
 
 export function GanttPage() {
@@ -85,11 +86,7 @@ export function GanttPage() {
     const mappedRemoteKeys = new Set(
       Object.values(integrationSettings.mapping.fields).filter((k): k is string => k !== null)
     )
-    return (
-      integrationSettings.knownFields.length
-        ? integrationSettings.knownFields
-        : redmineStandardFields
-    )
+    return effectiveFields(integrationSettings)
       .filter(
         (f) =>
           (!mappedRemoteKeys.has(f.key) || f.key === 'description') &&
@@ -188,6 +185,7 @@ export function GanttPage() {
             onOpenChange={setIsIntegrationDialogOpen}
             settings={integrationSettings}
             onSave={actions.handleSaveIntegrationSettings}
+            onSaveAndGet={actions.handleSaveAndGetIntegration}
             onTestConnection={actions.handleTestIntegrationConnection}
             onFetchMetadata={actions.handleFetchIntegrationMetadata}
           />

@@ -26,6 +26,7 @@ export type RedmineRelation = {
 
 /** Custom field value as embedded in an issue payload. */
 export type RedmineCustomFieldValue = {
+  multiple?: boolean
   id: number
   name: string
   /** Scalar for single-value fields, array for multi-value (list) fields. */
@@ -104,6 +105,7 @@ export type RedmineProjectResponse = {
     name: string
     identifier: string
     trackers?: RedmineTracker[]
+    issue_custom_fields?: RedmineNamedEntity[]
   }
 }
 
