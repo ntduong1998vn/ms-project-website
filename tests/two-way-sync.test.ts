@@ -186,6 +186,14 @@ describe('three-way merge', () => {
 })
 
 describe('incremental provider', () => {
+  it('accepts dirty standard name fields and sends only their writable ID keys', async () => {
+    const fetch = vi.fn(async () => new Response(''))
+    vi.stubGlobal('fetch', fetch)
+    const context = { ...ctx, mapping: { ...ctx.mapping, extraFields: ['status', 'fixed_version', 'tracker', 'priority'] },
+      remoteMeta: { ...ctx.remoteMeta, statuses: [{ id: 2, name: 'Active' }], versions: [{ id: 3, name: 'Release' }], trackers: [{ id: 4, name: 'Bug' }], priorities: [{ id: 5, name: 'High' }] } }
+    await createRedmineProvider(settings).updateIssue('101', { ...task(), status: 'Active', fixed_version: 'Release', tracker: 'Bug', priority: 'High' }, context, new Set(context.mapping.extraFields))
+    expect(JSON.parse(String((fetch.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toEqual({ issue: { status_id: 2, fixed_version_id: 3, tracker_id: 4, priority_id: 5 } })
+  })
   const settings = { ...defaultIntegrationSettings(), baseUrl: 'https://redmine.test', projectIdentifier: 'demo' }
   const ctx: PushContext = { mapping: defaultFieldMapping(), descriptors: [], resources: [], keyByTaskId: new Map(), remoteMeta: { trackers: [], members: [], statuses: [], priorities: [], versions: [] }, workingHoursPerDay: 8, durationUnit: 'day' }
   it('encodes the inclusive cursor and ordering on every page and exposes updatedOn', async () => {

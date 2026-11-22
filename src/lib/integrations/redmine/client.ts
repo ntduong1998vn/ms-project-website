@@ -116,7 +116,7 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     } : ctx.mapping
     const issue = buildIssuePayload(task, { ...ctx, mapping }, 'update')
     if (remoteKeys) {
-      const writeKeys: Record<string, string> = { parent_id: 'parent_issue_id', assigned_to: 'assigned_to_id' }
+      const writeKeys: Record<string, string> = { parent_id: 'parent_issue_id', assigned_to: 'assigned_to_id', status: 'status_id', tracker: 'tracker_id', priority: 'priority_id', fixed_version: 'fixed_version_id' }
       const wireKey = (key: string) => writeKeys[key] ?? key
       const clear = (key: string) => {
         const id = parseCustomFieldKey(key)
