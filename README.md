@@ -2,7 +2,9 @@
 
 ## Redmine proxy on Vercel
 
-Set `REDMINE_ALLOWED_ORIGINS` in Vercel to a comma-separated list of trusted Redmine origins, e.g. `https://redmine.example.com,https://issues.example.org`. Empty means the production proxy is disabled (403). Redeploy after changing it. Enable **Use proxy (avoids CORS)** in connection settings; the saved `useDevProxy` option remains compatible. Development uses Vite's local proxy; production uses `/api/redmine-proxy/*`. Redmine subpaths are supported. Only allow servers you trust: requests forward the caller's API key, not a server credential. Cookies and redirects are not forwarded; request bodies are limited to 1 MiB.
+Enable **Use proxy (avoids CORS)** in connection settings, or click **Use proxy** after a production connection error. No Vercel configuration or redeploy is needed for public Redmine servers. HTTPS is recommended; HTTP and custom ports are supported. With `REDMINE_ALLOWED_ORIGINS` unset/empty, the proxy checks every resolved address and pins the connection to public addresses, rejecting local/private/reserved destinations. As optional hardening, set this variable to comma-separated trusted origins (e.g. `https://redmine.example.com,https://issues.example.org`) to restrict requests to those origins instead; changing it requires redeployment.
+
+Development retains Vite's local proxy; production uses `/api/redmine-proxy/*`. Redmine subpaths and the saved `useDevProxy` setting remain supported. Only `.json` API paths with an `X-Redmine-API-Key` are forwarded. The key is supplied by the caller, never a server credential. Cookies and redirects are not forwarded; request bodies are limited to 1 MiB. Only send keys to servers you trust.
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 

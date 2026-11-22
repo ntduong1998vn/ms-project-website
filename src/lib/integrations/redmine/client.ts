@@ -39,6 +39,10 @@ class RedmineRequestError extends Error {
   }
 }
 
+export class RedmineCorsError extends Error {
+  constructor() { super('Cannot reach Redmine directly. Use proxy to connect without browser CORS restrictions.') }
+}
+
 export function createRedmineProvider(settings: IntegrationSettings): IssueTrackerProvider {
   const useProxy = settings.useDevProxy
   const base = useProxy ? (import.meta.env.DEV ? '/redmine-proxy' : '/api/redmine-proxy') : settings.baseUrl.replace(/\/+$/, '')
@@ -53,7 +57,8 @@ export function createRedmineProvider(settings: IntegrationSettings): IssueTrack
     } catch (err) {
       // fetch rejects with TypeError on network failure / CORS block
       if (err instanceof TypeError) {
-        throw new Error('Cannot reach Redmine. Check the URL, enable "Use proxy (avoids CORS)", and configure REDMINE_ALLOWED_ORIGINS on Vercel.')
+        if (!import.meta.env.DEV && !useProxy) throw new RedmineCorsError()
+        throw new Error('Cannot reach Redmine. Check the URL or enable "Use proxy (avoids CORS)".')
       }
       throw err
     }

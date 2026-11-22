@@ -7,6 +7,7 @@ import { syncTaskFields } from '@/lib/integrations/fields'
 import { applyIntegrationMetadata, effectiveFields, invalidateIntegrationMetadata } from '@/lib/integrations/settings'
 import { createProvider } from '@/lib/integrations'
 import { importCustomFieldSchema } from '@/lib/integrations/redmine/schema'
+import { RedmineCorsError } from '@/lib/integrations/redmine/client'
 import type { IntegrationSettings, RemoteFieldDescriptor, RemoteFieldValueType, RemoteProjectMetadata, SyncTaskField } from '@/lib/integrations/types'
 
 interface IntegrationSettingsDialogProps {
@@ -40,6 +41,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
   const [message, setMessage] = useState('')
   const [warnings, setWarnings] = useState<string[]>([])
   const [error, setError] = useState('')
+  const [proxySuggested, setProxySuggested] = useState(false)
   const [projects, setProjects] = useState<Array<{ id: number; identifier: string; name: string }>>([])
   const [search, setSearch] = useState('')
   const [metadataReady, setMetadataReady] = useState(false)
@@ -73,7 +75,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
       createProvider(request.settings).listProjects().then((items) => {
         if (!cancelled) setProjects(items)
       }).catch((err: unknown) => {
-        if (!cancelled) setError('Project list: ' + (err instanceof Error ? err.message : String(err)) + ' — use the manual identifier below.')
+        if (!cancelled) { setError('Project list: ' + (err instanceof Error ? err.message : String(err)) + ' — use the manual identifier below.'); setProxySuggested(err instanceof RedmineCorsError) }
       }).finally(() => { if (!cancelled) setBusy(false) })
     } else {
       onFetchMetadata(request.settings).then((meta) => {
@@ -82,13 +84,14 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
         setWarnings(meta.warnings)
         setMetadataReady(true)
       }).catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        if (!cancelled) { setError(err instanceof Error ? err.message : String(err)); setProxySuggested(err instanceof RedmineCorsError) }
       }).finally(() => { if (!cancelled) setBusy(false) })
     }
     return () => { cancelled = true }
   }, [request, onFetchMetadata])
 
   function updateConnection(patch: Partial<IntegrationSettings>) {
+    setProxySuggested(false)
     setDraft((d) => invalidateIntegrationMetadata(d, patch))
     setError('')
     setWarnings([])
@@ -100,6 +103,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
   }
 
   async function test() {
+    setProxySuggested(false)
     setBusy(true)
     setTested(false)
     setError('')
@@ -107,7 +111,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
       const name = await onTestConnection(draft)
       setMessage('Connected as ' + name)
       setTested(true)
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); setProxySuggested(err instanceof RedmineCorsError) }
     finally { setBusy(false) }
   }
 
@@ -155,7 +159,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
       <label className="block text-sm">Redmine URL<input className={inputClass} value={draft.baseUrl} placeholder="https://redmine.example.com" disabled={busy} onChange={(e) => updateConnection({ baseUrl: e.target.value })} /></label>
       <label className="block text-sm">API key<input className={inputClass} type="password" value={draft.apiKey} disabled={busy} onChange={(e) => updateConnection({ apiKey: e.target.value })} /></label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.useDevProxy} disabled={busy} onChange={(e) => updateConnection({ useDevProxy: e.target.checked })} /> Use proxy (avoids CORS)</label>
-      <p className="text-xs text-muted-foreground">Bypasses CORS through Vite in development or the Vercel proxy in production. Production requires REDMINE_ALLOWED_ORIGINS on the server. Your API key is stored in this browser.</p>
+      <p className="text-xs text-muted-foreground">Bypasses CORS through Vite in development or the Vercel proxy in production. Public Redmine servers work without server configuration; HTTPS is recommended. Your API key is stored in this browser.</p>
       <Button disabled={busy || !draft.baseUrl.trim() || !draft.apiKey.trim()} onClick={() => void test()}>Test Connection</Button>
       {message && <p role="status" className="text-sm text-green-600">{message}</p>}
     </section>}
@@ -204,6 +208,7 @@ function Content({ settings, onSave, onSaveAndGet, onTestConnection, onFetchMeta
     </section>}
     {busy && <p role="status" className="mt-3 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{step === 2 ? 'Discovering fields…' : 'Connecting…'}</p>}
     {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+    {error && proxySuggested && !draft.useDevProxy && <Button className="mt-2" onClick={() => { updateConnection({ useDevProxy: true }); setStep(0) }}>Use proxy</Button>}
     <footer className="mt-5 flex justify-between gap-2 border-t border-border pt-4">
       <Button variant="outline" disabled={busy || step === 0} onClick={() => goTo(step - 1)}>Back</Button>
       {step < 3 ? <Button disabled={busy || (step === 0 && !tested) || (step === 1 && !draft.projectIdentifier.trim()) || (step === 2 && (!metadataReady || !draft.mapping.fields.text))} onClick={() => goTo(step + 1)}>Next</Button> : <div className="flex gap-2"><Button variant="outline" onClick={() => save(false)}>Save</Button><Button onClick={() => save(true)}>Save &amp; Get Tasks</Button></div>}
