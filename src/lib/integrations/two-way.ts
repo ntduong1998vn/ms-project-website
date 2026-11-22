@@ -2,6 +2,7 @@ import type { ILink, ITask } from '@svar-ui/react-gantt'
 import type { GanttResource } from '@/types/gantt'
 import type { IntegrationFieldMapping, IssueTrackerProvider, PushContext, RemoteFieldDescriptor, RemoteIssue } from '@/lib/integrations/types'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
+import { autoScheduleTasks } from '@/lib/scheduler'
 import { applyRemoteIssues } from '@/lib/integrations/sync'
 import { syncTaskFields } from '@/lib/integrations/fields'
 import { snapshot, syncEqual, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
@@ -13,6 +14,7 @@ type TaskPlan = { original: ITask; remote?: RemoteIssue; changes: Change[] }
 export type SyncPlan = {
   tasks: ITask[]; links: ILink[]; resources: GanttResource[]; inserted: ITask[]
   entries: TaskPlan[]; conflicts: SyncConflict[]; mapping: IntegrationFieldMapping; autoPull: boolean
+  calendar: ProjectCalendarConfig; durationUnit: 'day' | 'hour'; autoSchedule: boolean
 }
 export type SyncReport = { pulled: number; pushed: number; inserted: number; conflictsResolved: number; failed: Array<{ key: string; task: string; error: string }> }
 
@@ -24,11 +26,11 @@ export async function pushNewTasks(tasks: ITask[], provider: Pick<IssueTrackerPr
   }
 }
 
-export function mergeSyncTasks(before: ITask[], current: ITask[], incoming: ITask[], mapping: IntegrationFieldMapping): ITask[] {
+export function mergeSyncTasks(before: ITask[], current: ITask[], incoming: ITask[], mapping: IntegrationFieldMapping, scheduling?: Pick<SyncPlan, 'calendar' | 'durationUnit' | 'autoSchedule' | 'links'>): ITask[] {
   const originals = new Map(before.map((task) => [String(task.id), task]))
   const results = new Map(incoming.map((task) => [String(task.id), task]))
   const ids = new Set(current.map((task) => String(task.id)))
-  return [...current.map((task) => {
+  const mergedTasks = [...current.map((task) => {
     const original = originals.get(String(task.id))
     const result = results.get(String(task.id))
     if (!original || !result) return task
@@ -36,6 +38,7 @@ export function mergeSyncTasks(before: ITask[], current: ITask[], incoming: ITas
     for (const { field } of syncFields(mapping)) if (syncEqual(task[field], original[field], field)) merged[field] = result[field]
     return merged
   }), ...incoming.filter((task) => !originals.has(String(task.id)) && !ids.has(String(task.id)))]
+  return scheduling?.autoSchedule ? autoScheduleTasks(mergedTasks, scheduling.links, scheduling.calendar, scheduling.durationUnit) : mergedTasks
 }
 
 export function planSync(input: {
@@ -81,7 +84,7 @@ export function planSync(input: {
     return { original, remote, changes }
   })
   return { tasks, links: converted.kind === 'success' ? converted.links : links, resources: converted.kind === 'success' ? converted.resources : resources,
-    inserted, entries, conflicts, mapping, autoPull: !!input.autoPull }
+    inserted, entries, conflicts, mapping, autoPull: !!input.autoPull, calendar, durationUnit, autoSchedule: !!input.autoSchedule }
 }
 
 export async function executeSync(plan: SyncPlan, choices: Record<string, SyncChoice>, push: (key: string, task: ITask, keys: ReadonlySet<string>) => Promise<void>) {
@@ -122,6 +125,7 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
       }
     }
   }))
-  return { tasks: [...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => ({ ...task, externalSync: { updatedOn: taskBaseline(task)?.updatedOn, base: snapshot(task, plan.mapping) } }))],
+  const mergedTasks = [...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => ({ ...task, externalSync: { updatedOn: taskBaseline(task)?.updatedOn, base: snapshot(task, plan.mapping) } }))]
+  return { tasks: plan.autoSchedule ? autoScheduleTasks(mergedTasks, plan.links, plan.calendar, plan.durationUnit) : mergedTasks,
     links: plan.links, resources: plan.resources, report }
 }

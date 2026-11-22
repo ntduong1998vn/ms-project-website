@@ -54,6 +54,20 @@ describe('baseline and comparator', () => {
 })
 
 describe('three-way merge', () => {
+  it.each([true, false])('reschedules unfetched and local successors only with auto-schedule enabled (%s)', async (autoSchedule) => {
+    const datesMapping = { ...mapping, fields: { ...mapping.fields, start: 'start_date', end: 'due_date' } }
+    const predecessor = withBaseline({ ...task(), start: new Date(2026, 8, 7), end: new Date(2026, 8, 8), duration: 1 }, datesMapping)
+    const successor = withBaseline({ ...task(), id: 2, externalKey: '102', start: new Date(2026, 8, 8), end: new Date(2026, 8, 9), duration: 1 }, datesMapping)
+    const local = { id: 3, text: 'Local', start: new Date(2026, 8, 9), end: new Date(2026, 8, 10), duration: 1 }
+    const tasks = [predecessor, successor, local]
+    const links = [{ id: 1, source: 1, target: 2, type: 'e2s' }, { id: 2, source: 2, target: 3, type: 'e2s' }]
+    const plan = planSync({ tasks, links, resources: [], issues: [{ ...issue(), fields: { ...issue().fields, start_date: '2026-09-10', due_date: '2026-09-10' } }], descriptors: [], mapping: datesMapping, calendar: defaultCalendarConfig, durationUnit: 'day', autoSchedule })
+    const result = await executeSync(plan, {}, vi.fn())
+    const merged = mergeSyncTasks(tasks, tasks, result.tasks, datesMapping, plan)
+    expect(merged[1].start).toEqual(new Date(2026, 8, autoSchedule ? 11 : 8))
+    expect(merged[2].start).toEqual(new Date(2026, 8, autoSchedule ? 14 : 9))
+    expect(result.tasks[1].start).toEqual(merged[1].start)
+  })
   it.each(['Environment', ''])('uses task labels and custom labels with a missing-label fallback (%s)', (label) => {
     const plan = planSync({ tasks: [{ ...based(), text: 'Local', cf_1: 'Local' }], issues: [{ ...issue('Remote'), fields: { ...issue('Remote').fields, cf_1: 'Remote' } }],
       links: [], resources: [], mapping, descriptors: [{ key: 'cf_1', label, kind: 'custom', valueType: 'string' }], calendar: defaultCalendarConfig, durationUnit: 'day' })

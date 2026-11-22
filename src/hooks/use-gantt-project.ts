@@ -1368,7 +1368,7 @@ export function useGanttProject() {
     try {
       const provider = createProvider(session.settings)
       const result = await executeSync(session.plan, choices, (key, task, keys) => provider.updateIssue(key, task, session.ctx, keys))
-      setTasks((current) => mergeSyncTasks(session.plan.tasks, current, result.tasks, session.settings.mapping))
+      setTasks((current) => mergeSyncTasks(session.plan.tasks, current, result.tasks, session.settings.mapping, session.plan))
       setLinks(result.links)
       setResourceList(result.resources)
       if (result.report.failed.length === 0 && (!session.plan.autoPull || session.plan.conflicts.length === 0)) {
