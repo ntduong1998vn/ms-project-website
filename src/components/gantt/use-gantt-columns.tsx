@@ -12,10 +12,19 @@ import {
   StartDateCell,
   WorkCell,
 } from '@/components/gantt/gantt-cells'
-import { ColumnFilterHeader } from '@/components/gantt/column-filter-header'
+import { ColumnFilterHeader, type ColumnFilterKind } from '@/components/gantt/column-filter-header'
 import { getResourceEffortWarnings } from '@/lib/resource-effort'
 import { sameTaskId } from '@/lib/task-helpers'
-import { collectDistinctOptions, taskTextFilter, workHours } from '@/lib/gantt-filters'
+import {
+  QUICK_FILTER_COLUMN_ID,
+  collectDistinctOptions,
+  taskDateFilter,
+  taskFinishDate,
+  taskNumberFilter,
+  taskQuickFilter,
+  taskTextFilter,
+  workHours,
+} from '@/lib/gantt-filters'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import type { GanttResource, TaskWithResources } from '@/types/gantt'
 
@@ -58,10 +67,12 @@ export function useGanttColumns({
   return useMemo(
     () => {
       const textOptions = collectDistinctOptions(tasks, (t) => t.text)
+      const resourceGetter = (task: ITask) =>
+        ((task as TaskWithResources).resources ?? [])
+          .map((id) => resources.find((r) => r.id === id)?.label)
+          .filter((v): v is string => Boolean(v))
+      const resourceUsage = collectDistinctOptions(tasks, resourceGetter)
       const resourceOptions = resources.map((r) => r.label).sort()
-      const hasResourceBlank = tasks.some(
-        (t) => !((t as TaskWithResources).resources?.length ?? 0)
-      )
       const predecessorGetter = (task: ITask) =>
         links
           .filter((link) => String(link.target) === String(task.id))
@@ -70,7 +81,14 @@ export function useGanttColumns({
 
       const headerCell = (
         title: string,
-        cfg: { sortable?: boolean; filterable?: boolean; options?: string[]; hasBlank?: boolean }
+        cfg: {
+          sortable?: boolean
+          filterable?: boolean
+          kind?: ColumnFilterKind
+          options?: string[]
+          hasBlank?: boolean
+          counts?: Record<string, number>
+        }
       ) => ({
         text: title,
         cell: (props: {
@@ -88,13 +106,28 @@ export function useGanttColumns({
             title,
             sortable: cfg.sortable ?? false,
             filterable: cfg.filterable ?? false,
+            kind: cfg.kind,
             options: cfg.options ?? [],
             hasBlank: cfg.hasBlank ?? false,
+            counts: cfg.counts,
             ganttApi,
           }),
       })
 
+      const textFilter = { type: 'text' as const, config: { handler: taskTextFilter } }
+      const numberFilter = { type: 'text' as const, config: { handler: taskNumberFilter } }
+      const dateFilter = { type: 'text' as const, config: { handler: taskDateFilter } }
+
       const columns: IColumnConfig[] = [
+        {
+          // Hidden carrier for the filter bar's preset + search, so it combines with column filters.
+          id: QUICK_FILTER_COLUMN_ID,
+          hidden: true,
+          width: 0,
+          sort: false,
+          getter: (task: ITask) => task,
+          header: { text: '', filter: { type: 'text' as const, config: { handler: taskQuickFilter } } },
+        },
         {
           id: 'effortWarning',
           header: {
@@ -114,7 +147,10 @@ export function useGanttColumns({
         },
         {
           id: 'id',
-          header: headerCell('ID', { sortable: true }),
+          header: {
+            ...headerCell('ID', { sortable: true, filterable: true, kind: 'number' }),
+            filter: numberFilter,
+          },
           width: 50,
           align: 'center',
           sort: true,
@@ -144,8 +180,9 @@ export function useGanttColumns({
               filterable: true,
               options: textOptions.options,
               hasBlank: textOptions.hasBlank,
+              counts: textOptions.counts,
             }),
-            filter: { type: 'text' as const, config: { handler: taskTextFilter } },
+            filter: textFilter,
           },
           width: 220,
           flexgrow: 2,
@@ -154,7 +191,14 @@ export function useGanttColumns({
         },
         {
           id: 'duration',
-          header: headerCell(`Duration (${durationUnit === 'day' ? 'days' : 'hrs'})`, { sortable: true }),
+          header: {
+            ...headerCell(`Duration (${durationUnit === 'day' ? 'days' : 'hrs'})`, {
+              sortable: true,
+              filterable: true,
+              kind: 'number',
+            }),
+            filter: numberFilter,
+          },
           width: 100,
           align: 'center',
           sort: true,
@@ -168,7 +212,7 @@ export function useGanttColumns({
         },
         {
           id: 'start',
-          header: headerCell('Start', { sortable: true }),
+          header: { ...headerCell('Start', { sortable: true, filterable: true, kind: 'date' }), filter: dateFilter },
           width: 125,
           align: 'center',
           sort: true,
@@ -182,7 +226,8 @@ export function useGanttColumns({
         },
         {
           id: 'end',
-          header: headerCell('Finish', { sortable: true }),
+          header: { ...headerCell('Finish', { sortable: true, filterable: true, kind: 'date' }), filter: dateFilter },
+          getter: taskFinishDate,
           width: 125,
           align: 'center',
           sort: true,
@@ -203,8 +248,9 @@ export function useGanttColumns({
               filterable: true,
               options: predecessorOptions.options,
               hasBlank: predecessorOptions.hasBlank,
+              counts: predecessorOptions.counts,
             }),
-            filter: { type: 'text' as const, config: { handler: taskTextFilter } },
+            filter: textFilter,
           },
           width: 100,
           align: 'center',
@@ -215,18 +261,16 @@ export function useGanttColumns({
         },
         {
           id: 'resourceNames',
-          getter: (task: ITask) =>
-            ((task as TaskWithResources).resources ?? [])
-              .map((id) => resources.find((r) => r.id === id)?.label)
-              .filter((v): v is string => Boolean(v)),
+          getter: resourceGetter,
           sort: false,
           header: {
             ...headerCell('Resource Names', {
               filterable: true,
               options: resourceOptions,
-              hasBlank: hasResourceBlank,
+              hasBlank: resourceUsage.hasBlank,
+              counts: resourceUsage.counts,
             }),
-            filter: { type: 'text' as const, config: { handler: taskTextFilter } },
+            filter: textFilter,
           },
           width: 150,
           cell: (({ row }: { row: TaskWithResources }) => (
@@ -246,9 +290,12 @@ export function useGanttColumns({
       ]
 
       if (isWorkColumnVisible) {
-        columns.splice(4, 0, {
+        columns.splice(5, 0, {
           id: 'work',
-          header: headerCell('Work', { sortable: true }),
+          header: {
+            ...headerCell('Work', { sortable: true, filterable: true, kind: 'number' }),
+            filter: numberFilter,
+          },
           width: 90,
           align: 'center',
           sort: true,

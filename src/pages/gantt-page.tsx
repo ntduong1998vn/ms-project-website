@@ -5,6 +5,7 @@ import { ClipboardImportDialog } from '@/components/clipboard-import-dialog'
 import { CalendarSettingsDialog } from '@/components/calendar-settings-dialog'
 import { AppLayout } from '@/components/layout/app-layout'
 import { ColumnChooserDialog } from '@/components/gantt/column-chooser-dialog'
+import { GanttFilterBar } from '@/components/gantt/gantt-filter-bar'
 import { GanttRibbon } from '@/components/gantt/gantt-ribbon'
 import { ResourcesPanel } from '@/components/gantt/resources-panel'
 import { TaskInfoPanel } from '@/components/gantt/task-info-panel'
@@ -146,7 +147,9 @@ export function GanttPage() {
         />
       ) : (
         <div className="flex h-full min-h-0 w-full">
-          <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <GanttFilterBar key={gantt.api ? 'ready' : 'pending'} ganttApi={gantt.api} columns={columns} tasks={tasks} />
+            <div className="min-h-0 flex-1">
             <Willow>
               <Gantt
                 init={actions.handleInit}
@@ -172,6 +175,7 @@ export function GanttPage() {
                 onDeleteLink={actions.handleDeleteLink}
               />
             </Willow>
+            </div>
           </div>
           {selectedTask && (
             <TaskInfoPanel

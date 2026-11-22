@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { ITask } from '@svar-ui/react-gantt'
 
-import { BLANKS_OPTION, collectDistinctOptions, taskTextFilter, workHours } from '@/lib/gantt-filters'
+import {
+  BLANKS_OPTION,
+  collectDistinctOptions,
+  createTaskMatcher,
+  describeColumnFilter,
+  isColumnFilterActive,
+  isQuickFilterActive,
+  matchesTaskPreset,
+  taskDateFilter,
+  taskFinishDate,
+  taskNumberFilter,
+  taskQuickFilter,
+  taskTextFilter,
+  workHours,
+} from '@/lib/gantt-filters'
 
 function task(id: number, text = `task ${id}`, options: Partial<ITask> = {}): ITask {
   return { id, text, type: 'task', ...options } as ITask
@@ -110,5 +124,186 @@ describe('workHours', () => {
   it('falls back to 0 for invalid durations', () => {
     expect(workHours({ duration: NaN } as ITask, 'day', 8)).toBe(0)
     expect(workHours({ duration: -1 } as ITask, 'day', 8)).toBe(0)
+  })
+})
+
+describe('taskTextFilter extra modes', () => {
+  it('startsWith matches the beginning only', () => {
+    expect(taskTextFilter('Design Phase', { mode: 'startsWith', text: 'des' })).toBe(true)
+    expect(taskTextFilter('Design Phase', { mode: 'startsWith', text: 'phase' })).toBe(false)
+  })
+
+  it('notContains excludes any matching cell', () => {
+    expect(taskTextFilter('Design Phase', { mode: 'notContains', text: 'build' })).toBe(true)
+    expect(taskTextFilter(['Alice', 'Bob'], { mode: 'notContains', text: 'bob' })).toBe(false)
+  })
+})
+
+describe('taskNumberFilter', () => {
+  it('ignores filters without a value', () => {
+    expect(taskNumberFilter(5, { kind: 'number', op: 'gt', value: null })).toBe(true)
+  })
+
+  it('applies comparison operators', () => {
+    expect(taskNumberFilter(5, { kind: 'number', op: 'gt', value: 3 })).toBe(true)
+    expect(taskNumberFilter(3, { kind: 'number', op: 'gt', value: 3 })).toBe(false)
+    expect(taskNumberFilter(3, { kind: 'number', op: 'gte', value: 3 })).toBe(true)
+    expect(taskNumberFilter(2, { kind: 'number', op: 'lt', value: 3 })).toBe(true)
+    expect(taskNumberFilter(3, { kind: 'number', op: 'lte', value: 3 })).toBe(true)
+    expect(taskNumberFilter(3, { kind: 'number', op: 'eq', value: 3 })).toBe(true)
+    expect(taskNumberFilter(3, { kind: 'number', op: 'neq', value: 3 })).toBe(false)
+  })
+
+  it('between is inclusive and order-independent', () => {
+    expect(taskNumberFilter(4, { kind: 'number', op: 'between', value: 2, to: 4 })).toBe(true)
+    expect(taskNumberFilter(4, { kind: 'number', op: 'between', value: 6, to: 3 })).toBe(true)
+    expect(taskNumberFilter(7, { kind: 'number', op: 'between', value: 2, to: 4 })).toBe(false)
+  })
+
+  it('rejects non-numeric cells', () => {
+    expect(taskNumberFilter(undefined, { kind: 'number', op: 'gte', value: 0 })).toBe(false)
+  })
+})
+
+describe('taskDateFilter', () => {
+  const day = new Date(2026, 2, 10, 15, 30)
+
+  it('compares by local calendar day', () => {
+    expect(taskDateFilter(day, { kind: 'date', op: 'on', from: '2026-03-10' })).toBe(true)
+    expect(taskDateFilter(day, { kind: 'date', op: 'onOrBefore', from: '2026-03-09' })).toBe(false)
+    expect(taskDateFilter(day, { kind: 'date', op: 'onOrAfter', from: '2026-03-10' })).toBe(true)
+  })
+
+  it('supports open and closed ranges', () => {
+    expect(taskDateFilter(day, { kind: 'date', op: 'between', from: '2026-03-01', to: '2026-03-31' })).toBe(true)
+    expect(taskDateFilter(day, { kind: 'date', op: 'between', from: '2026-03-11', to: '2026-03-31' })).toBe(false)
+    expect(taskDateFilter(day, { kind: 'date', op: 'between', to: '2026-03-10' })).toBe(true)
+  })
+
+  it('is inactive without dates and rejects missing cells', () => {
+    expect(taskDateFilter(day, { kind: 'date', op: 'on' })).toBe(true)
+    expect(taskDateFilter(null, { kind: 'date', op: 'on', from: '2026-03-10' })).toBe(false)
+  })
+})
+
+describe('taskFinishDate', () => {
+  it('converts exclusive end to inclusive finish', () => {
+    const finish = taskFinishDate(task(1, 'a', { start: new Date(2026, 2, 2), end: new Date(2026, 2, 5) }))
+    expect(finish?.getDate()).toBe(4)
+  })
+
+  it('uses start for milestones', () => {
+    const finish = taskFinishDate(task(1, 'm', { type: 'milestone', start: new Date(2026, 2, 2) }))
+    expect(finish?.getDate()).toBe(2)
+  })
+})
+
+describe('matchesTaskPreset', () => {
+  const today = new Date(2026, 2, 10)
+  const done = task(1, 'done', { progress: 100, end: new Date(2026, 2, 1) })
+  const half = task(2, 'half', { progress: 50, end: new Date(2026, 2, 5) })
+  const fresh = task(3, 'fresh', { progress: 0, end: new Date(2026, 2, 20), resources: [1] } as Partial<ITask>)
+  const milestone = task(4, 'ms', { type: 'milestone', start: new Date(2026, 2, 15) })
+  const summary = task(5, 'phase', { type: 'summary', progress: 0 })
+
+  it('all matches everything', () => {
+    expect([done, half, fresh, milestone, summary].every((t) => matchesTaskPreset(t, 'all', today))).toBe(true)
+  })
+
+  it('progress-based presets', () => {
+    expect(matchesTaskPreset(done, 'completed', today)).toBe(true)
+    expect(matchesTaskPreset(done, 'incomplete', today)).toBe(false)
+    expect(matchesTaskPreset(half, 'inProgress', today)).toBe(true)
+    expect(matchesTaskPreset(fresh, 'notStarted', today)).toBe(true)
+    expect(matchesTaskPreset(half, 'notStarted', today)).toBe(false)
+  })
+
+  it('late means unfinished with a finish day before today', () => {
+    expect(matchesTaskPreset(half, 'late', today)).toBe(true)
+    expect(matchesTaskPreset(done, 'late', today)).toBe(false)
+    expect(matchesTaskPreset(fresh, 'late', today)).toBe(false)
+  })
+
+  it('type and assignment presets', () => {
+    expect(matchesTaskPreset(milestone, 'milestones', today)).toBe(true)
+    expect(matchesTaskPreset(half, 'milestones', today)).toBe(false)
+    expect(matchesTaskPreset(summary, 'summary', today)).toBe(true)
+    expect(matchesTaskPreset(summary, 'notStarted', today)).toBe(false)
+    expect(matchesTaskPreset(half, 'unassigned', today)).toBe(true)
+    expect(matchesTaskPreset(fresh, 'unassigned', today)).toBe(false)
+  })
+})
+
+describe('taskQuickFilter', () => {
+  const t = task(12, 'Write Specs', { progress: 0 })
+
+  it('searches by name or exact id', () => {
+    expect(taskQuickFilter(t, { search: 'spec' })).toBe(true)
+    expect(taskQuickFilter(t, { search: '12' })).toBe(true)
+    expect(taskQuickFilter(t, { search: '1' })).toBe(false)
+  })
+
+  it('combines search with preset', () => {
+    expect(taskQuickFilter(t, { preset: 'completed', search: 'spec' })).toBe(false)
+    expect(taskQuickFilter(t, { preset: 'notStarted', search: 'spec' })).toBe(true)
+  })
+})
+
+describe('filter activity and descriptions', () => {
+  it('detects active filters', () => {
+    expect(isColumnFilterActive({ mode: 'contains', text: '  ' })).toBe(false)
+    expect(isColumnFilterActive({ mode: 'in', values: [] })).toBe(true)
+    expect(isColumnFilterActive({ kind: 'number', op: 'gt', value: 0 })).toBe(true)
+    expect(isColumnFilterActive({ kind: 'date', op: 'on' })).toBe(false)
+    expect(isQuickFilterActive({ preset: 'all', search: '' })).toBe(false)
+    expect(isQuickFilterActive({ preset: 'late' })).toBe(true)
+  })
+
+  it('describes filters for chips', () => {
+    expect(describeColumnFilter('Duration', { kind: 'number', op: 'gte', value: 3 })).toBe('Duration ≥ 3')
+    expect(describeColumnFilter('Duration', { kind: 'number', op: 'between', value: 2, to: 5 })).toBe('Duration 2–5')
+    expect(describeColumnFilter('Start', { kind: 'date', op: 'between', from: '2026-03-01', to: '2026-03-31' })).toBe(
+      'Start 2026-03-01 → 2026-03-31'
+    )
+    expect(describeColumnFilter('Resource', { mode: 'in', values: ['Alice', 'Bob', 'Carol'] })).toBe('Resource: 3 values')
+  })
+})
+
+describe('createTaskMatcher', () => {
+  const columns = [
+    { id: 'text', header: { filter: { config: { handler: taskTextFilter } } } },
+    { id: 'duration', header: { filter: { config: { handler: taskNumberFilter } } } },
+  ]
+
+  it('combines every column filter', () => {
+    const matcher = createTaskMatcher(
+      { text: { mode: 'contains', text: 'spec' }, duration: { kind: 'number', op: 'gte', value: 3 } },
+      columns
+    )
+    expect(matcher(task(1, 'Specs', { duration: 4 }))).toBe(true)
+    expect(matcher(task(2, 'Specs', { duration: 1 }))).toBe(false)
+    expect(matcher(task(3, 'Build', { duration: 4 }))).toBe(false)
+  })
+
+  it('matches everything without filters', () => {
+    expect(createTaskMatcher({}, columns)(task(1))).toBe(true)
+  })
+})
+
+describe('collectDistinctOptions counts', () => {
+  it('counts each value once per task', () => {
+    const tasks = [task(1, 'A'), task(2, 'A'), task(3, '')]
+    const result = collectDistinctOptions(tasks, (t) => t.text)
+    expect(result.counts).toEqual({ A: 2, [BLANKS_OPTION]: 1 })
+    expect(result.options).toEqual(['A'])
+  })
+})
+
+describe('empty multi-value cells', () => {
+  it('count as blank', () => {
+    expect(taskTextFilter([], { mode: 'in', values: [BLANKS_OPTION] })).toBe(true)
+    const result = collectDistinctOptions([task(1), task(2)], (t) => (t.id === 1 ? ['Alice'] : []))
+    expect(result.hasBlank).toBe(true)
+    expect(result.counts[BLANKS_OPTION]).toBe(1)
   })
 })
