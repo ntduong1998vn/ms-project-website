@@ -21,6 +21,26 @@ const provider = () => ({ createRelation: vi.fn(async (_key: string, row: Remote
 afterEach(() => vi.unstubAllGlobals())
 
 describe('two-way successor relations', () => {
+  it.each([false, true])('imports links to newly discovered successor tasks without deleting remote relations (source fetched: %s)', async (fetched) => {
+    const rows = [{ id: 8, key: '999', delay: 2 }]
+    const initial = plan(rows, [])
+    const pending = planSync({ ...initial, issues: [
+      ...(fetched ? [{ key: '101', fields: { subject: 'Task 1', successors: rows } }] : []),
+      { key: '999', fields: { subject: 'New successor', successors: [] } },
+    ], descriptors: [] })
+    const p = provider()
+    const push = vi.fn()
+    const result = await executeSync(pending, {}, push, p)
+    const target = result.tasks.find((task) => task.externalKey === '999')!
+    expect(result.links).toContainEqual(expect.objectContaining({ source: 1, target: target.id, lag: 2 }))
+    expect(taskBaseline(result.tasks[0])?.relations).toEqual(rows)
+    expect(hasLocalChanges(result.tasks[0], mapping, result.tasks, result.links)).toBe(false)
+    expect(result.report.failed).toEqual([])
+    expect(p.deleteRelation).not.toHaveBeenCalled()
+    expect(p.createRelation).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
+    expect(initial.links).toEqual([])
+  })
   it('keeps out-of-project relation IDs without deleting them and accepts unchanged links', async () => {
     const remote = [{ id: 8, key: '999', delay: 0 }]
     const p = provider()

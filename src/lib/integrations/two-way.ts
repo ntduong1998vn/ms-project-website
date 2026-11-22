@@ -67,7 +67,8 @@ export function planSync(input: {
   descriptors: RemoteFieldDescriptor[]; mapping: IntegrationFieldMapping
   calendar: ProjectCalendarConfig; durationUnit: 'day' | 'hour'; autoPull?: boolean; autoSchedule?: boolean
 }): SyncPlan {
-  const { links, resources, issues, descriptors, mapping, calendar, durationUnit } = input
+  const { resources, issues, descriptors, mapping, calendar, durationUnit } = input
+  const links = [...input.links]
   const tasks = ensureSyncIdentities(input.tasks)
   const seed = tasks.map((task) => {
     const baseline = taskBaseline(task)
@@ -82,6 +83,15 @@ export function planSync(input: {
   const existingKeys = new Set(tasks.filter((t) => t.externalSource === 'redmine').map((t) => String(t.externalKey)))
   const inserted = remoteTasks.filter((t) => t.externalSource === 'redmine' && !existingKeys.has(String(t.externalKey)))
   const byKey = new Map(issues.map((issue) => [issue.key, issue]))
+  if (mapping.fields.successors && inserted.length) {
+    const insertedKeys = new Set(inserted.map((task) => String(task.externalKey)))
+    let nextLinkId = links.reduce((max, link) => Math.max(max, Number(link.id) || 0), 0) + 1
+    for (const task of tasks) {
+      const rows = (byKey.get(String(task.externalKey))?.fields[mapping.fields.successors] ?? taskBaseline(task)?.relations ?? []) as RemoteRelation[]
+      const imported = rows.filter((row) => insertedKeys.has(row.key))
+      for (const link of applyRelations([], task, inserted, imported, calendar.workingHoursPerDay, durationUnit)) links.push({ ...link, id: nextLinkId++ })
+    }
+  }
   const convertedByKey = new Map(remoteTasks.filter((t) => t.externalSource === 'redmine').map((t) => [String(t.externalKey), t]))
   const conflicts: SyncConflict[] = []
   const entries = tasks.filter((t) => t.externalSource === 'redmine' && t.externalKey).map((original): TaskPlan => {
