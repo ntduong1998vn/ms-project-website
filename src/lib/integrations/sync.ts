@@ -19,6 +19,23 @@ import {
 import { getNextNumericTaskId, hasParentCycle, sameTaskId } from '@/lib/task-helpers'
 import { withBaseline } from '@/lib/integrations/baseline'
 
+export function normalizeRemoteHierarchy(tasks: ITask[]): ITask[] {
+  const types = new Map(tasks.map((task) => [String(task.id), task.type]))
+  const normalized = tasks.map((task) => {
+    if (task.parent === undefined || types.get(String(task.parent)) !== 'milestone') return task
+    const copy = { ...task }
+    delete copy.parent
+    return copy
+  })
+  const parents = new Set(normalized.filter((task) => task.parent !== undefined).map((task) => String(task.parent)))
+  return normalized.map((task) => {
+    if (task.open === undefined || parents.has(String(task.id))) return task
+    const copy = { ...task }
+    delete copy.open
+    return copy
+  })
+}
+
 export type RemoteSyncResult =
   | { kind: 'success'; tasks: ITask[]; links: ILink[]; resources: GanttResource[]; inserted: number; updated: number }
   | { kind: 'no-issues' }
@@ -353,25 +370,7 @@ export function applyRemoteIssues(
   // no task may point at a milestone parent, and `open` is only allowed on
   // tasks that actually have children — SVAR crashes on `open` leaf tasks.
   // Copy before mutating: mergedTasks may share objects with existing.tasks.
-  for (let index = 0; index < mergedTasks.length; index += 1) {
-    const task = mergedTasks[index]
-    if (task.parent !== undefined && typeById.get(String(task.parent)) === 'milestone') {
-      const copy = { ...task }
-      delete copy.parent
-      mergedTasks[index] = copy
-    }
-  }
-  const mergedParentIds = new Set(
-    mergedTasks.filter((task) => task.parent !== undefined).map((task) => String(task.parent))
-  )
-  for (let index = 0; index < mergedTasks.length; index += 1) {
-    const task = mergedTasks[index]
-    if (task.open !== undefined && !mergedParentIds.has(String(task.id))) {
-      const copy = { ...task }
-      delete copy.open
-      mergedTasks[index] = copy
-    }
-  }
+  const normalizedTasks = normalizeRemoteHierarchy(mergedTasks)
 
   // 8. Links: remote relations are authoritative only between tasks synced in
   // this fetch — links to local-only tasks survive.
@@ -407,7 +406,7 @@ export function applyRemoteIssues(
   }
 
   // 9-10. Optional auto-schedule, then return counts.
-  const scheduled = isAutoSchedule ? autoScheduleTasks(mergedTasks, mergedLinks, calendarConfig, durationUnit) : mergedTasks
+  const scheduled = isAutoSchedule ? autoScheduleTasks(normalizedTasks, mergedLinks, calendarConfig, durationUnit) : normalizedTasks
   const fetched = new Map(issues.map((issue) => [issue.key, issue]))
   const tasks = scheduled.map((task) => task.externalSource === providerId && fetched.has(String(task.externalKey))
     ? withBaseline(task, mapping, fetched.get(String(task.externalKey))?.updatedOn) : task)

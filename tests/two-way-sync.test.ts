@@ -54,6 +54,19 @@ describe('baseline and comparator', () => {
 })
 
 describe('three-way merge', () => {
+  it('clears obsolete open flags after remote reparenting without mutating the source', async () => {
+    const parentMapping = { ...mapping, fields: { ...mapping.fields, parent: 'parent_id' } }
+    const parent = { id: 5, text: 'Former parent', open: true, type: 'summary' }
+    const child = withBaseline({ ...task(), parent: 5 }, parentMapping)
+    const tasks = [parent, child]
+    const plan = planSync({ tasks, issues: [{ ...issue(), fields: { ...issue().fields, parent_id: null } }], links: [], resources: [], mapping: parentMapping, descriptors: [], calendar: defaultCalendarConfig, durationUnit: 'day' })
+    const result = await executeSync(plan, {}, vi.fn())
+    expect(result.tasks[0].open).toBeUndefined()
+    const merged = mergeSyncTasks(tasks, tasks, result.tasks, parentMapping)
+    expect(merged[0].open).toBeUndefined()
+    expect(merged[1].parent).toBeUndefined()
+    expect(parent.open).toBe(true)
+  })
   it.each([true, false])('reschedules unfetched and local successors only with auto-schedule enabled (%s)', async (autoSchedule) => {
     const datesMapping = { ...mapping, fields: { ...mapping.fields, start: 'start_date', end: 'due_date' } }
     const predecessor = withBaseline({ ...task(), start: new Date(2026, 8, 7), end: new Date(2026, 8, 8), duration: 1 }, datesMapping)

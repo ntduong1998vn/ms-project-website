@@ -3,7 +3,7 @@ import type { GanttResource } from '@/types/gantt'
 import type { IntegrationFieldMapping, IssueTrackerProvider, PushContext, RemoteFieldDescriptor, RemoteIssue } from '@/lib/integrations/types'
 import type { ProjectCalendarConfig } from '@/lib/scheduler'
 import { autoScheduleTasks } from '@/lib/scheduler'
-import { applyRemoteIssues } from '@/lib/integrations/sync'
+import { applyRemoteIssues, normalizeRemoteHierarchy } from '@/lib/integrations/sync'
 import { syncTaskFields } from '@/lib/integrations/fields'
 import { snapshot, syncEqual, syncFields, taskBaseline, withBaseline } from '@/lib/integrations/baseline'
 
@@ -30,14 +30,14 @@ export function mergeSyncTasks(before: ITask[], current: ITask[], incoming: ITas
   const originals = new Map(before.map((task) => [String(task.id), task]))
   const results = new Map(incoming.map((task) => [String(task.id), task]))
   const ids = new Set(current.map((task) => String(task.id)))
-  const mergedTasks = [...current.map((task) => {
+  const mergedTasks = normalizeRemoteHierarchy([...current.map((task) => {
     const original = originals.get(String(task.id))
     const result = results.get(String(task.id))
     if (!original || !result) return task
     const merged: ITask = { ...task, externalSync: result.externalSync }
     for (const { field } of syncFields(mapping)) if (syncEqual(task[field], original[field], field)) merged[field] = result[field]
     return merged
-  }), ...incoming.filter((task) => !originals.has(String(task.id)) && !ids.has(String(task.id)))]
+  }), ...incoming.filter((task) => !originals.has(String(task.id)) && !ids.has(String(task.id)))])
   return scheduling?.autoSchedule ? autoScheduleTasks(mergedTasks, scheduling.links, scheduling.calendar, scheduling.durationUnit) : mergedTasks
 }
 
@@ -125,7 +125,7 @@ export async function executeSync(plan: SyncPlan, choices: Record<string, SyncCh
       }
     }
   }))
-  const mergedTasks = [...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => ({ ...task, externalSync: { updatedOn: taskBaseline(task)?.updatedOn, base: snapshot(task, plan.mapping) } }))]
+  const mergedTasks = normalizeRemoteHierarchy([...plan.tasks.map((t) => t.externalSource === 'redmine' ? completed.get(String(t.externalKey)) ?? t : t), ...plan.inserted.map((task) => ({ ...task, externalSync: { updatedOn: taskBaseline(task)?.updatedOn, base: snapshot(task, plan.mapping) } })))])
   return { tasks: plan.autoSchedule ? autoScheduleTasks(mergedTasks, plan.links, plan.calendar, plan.durationUnit) : mergedTasks,
     links: plan.links, resources: plan.resources, report }
 }
