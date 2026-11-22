@@ -325,7 +325,7 @@ export function collectDistinctOptions(
   tasks: ITask[],
   get: (t: ITask) => unknown
 ): { options: string[]; hasBlank: boolean; counts: Record<string, number> } {
-  const counts: Record<string, number> = {}
+  const counts: Record<string, number> = Object.create(null)
   let hasBlank = false
 
   for (const task of tasks) {

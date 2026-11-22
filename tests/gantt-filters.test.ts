@@ -81,6 +81,14 @@ describe('taskTextFilter', () => {
 })
 
 describe('collectDistinctOptions', () => {
+  it('counts names that collide with Object.prototype keys', () => {
+    const tasks = [{ text: '__proto__' }, { text: 'constructor' }, { text: 'constructor' }] as ITask[]
+    const { options, counts } = collectDistinctOptions(tasks, (t) => t.text)
+    expect(options).toEqual(['__proto__', 'constructor'])
+    expect(counts['__proto__']).toBe(1)
+    expect(counts['constructor']).toBe(2)
+  })
+
   it('collects, dedupes, sorts, and reports blanks', () => {
     const tasks = [
       task(1, 'Design'),
